@@ -60,6 +60,7 @@
 #include "spindle_control.h"
 #include "stepper.h"
 #include "jog.h"
+#include "llp_transport.h"
 
 // ---------------------------------------------------------------------------------------
 // COMPILE-TIME ERROR CHECKING OF DEFINE VALUES:

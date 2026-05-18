@@ -28,13 +28,24 @@
 #endif
 #ifndef TX_BUFFER_SIZE
   #ifdef USE_LINE_NUMBERS
-    #define TX_BUFFER_SIZE 112
+    #define TX_BUFFER_SIZE 160
   #else
-    #define TX_BUFFER_SIZE 104
+    #define TX_BUFFER_SIZE 160
   #endif
 #endif
 
 #define SERIAL_NO_DATA 0xff
+
+#define RX_RING_BUFFER (RX_BUFFER_SIZE+1)
+#define TX_RING_BUFFER (TX_BUFFER_SIZE+1)
+
+extern uint8_t serial_rx_buffer[RX_RING_BUFFER];
+extern uint8_t serial_rx_buffer_head;
+extern volatile uint8_t serial_rx_buffer_tail;
+
+extern uint8_t serial_tx_buffer[TX_RING_BUFFER];
+extern uint8_t serial_tx_buffer_head;
+extern volatile uint8_t serial_tx_buffer_tail;
 
 
 void serial_init();
