@@ -32,12 +32,12 @@ void llp_transport_init(void)
     llp_parser_init(&llp_rx_parser);
     llp_tx_line_idx = 0;
 
-    TCCR0A = 0;
-    TCCR0B = (1 << CS01) | (1 << CS00);
-    TIMSK0 |= (1 << TOIE0);
+    TCCR2A = 0;
+    TCCR2B = (1 << CS22);  // 1/64 prescaler -> 4us per tick at 16MHz
+    TIMSK2 |= (1 << TOIE2);
 }
 
-ISR(TIMER0_OVF_vect)
+ISR(TIMER2_OVF_vect)
 {
     llp_ms_counter++;
 }

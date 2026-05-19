@@ -23,7 +23,7 @@
 
 #include "llp_protocol.h"
 
-#define LLP_TX_LINE_BUF_SIZE  96
+#define LLP_TX_LINE_BUF_SIZE  80
 
 void llp_transport_init(void);
 void llp_transport_rx_byte(uint8_t byte);

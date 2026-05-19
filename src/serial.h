@@ -24,13 +24,13 @@
 
 
 #ifndef RX_BUFFER_SIZE
-  #define RX_BUFFER_SIZE 128
+  #define RX_BUFFER_SIZE 96
 #endif
 #ifndef TX_BUFFER_SIZE
   #ifdef USE_LINE_NUMBERS
     #define TX_BUFFER_SIZE 160
   #else
-    #define TX_BUFFER_SIZE 160
+    #define TX_BUFFER_SIZE 128
   #endif
 #endif
 

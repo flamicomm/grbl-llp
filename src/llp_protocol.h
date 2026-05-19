@@ -47,7 +47,7 @@
 
 /** Maximum payload (layer chain) size in bytes. */
 #ifndef LLP_MAX_PAYLOAD
-#define LLP_MAX_PAYLOAD       96
+#define LLP_MAX_PAYLOAD       80
 #endif
 
 /** Inter-byte timeout in milliseconds before the parser resets. */
