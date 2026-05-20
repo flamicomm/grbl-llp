@@ -96,6 +96,12 @@ void protocol_main_loop()
         } else if (line[0] == '$') {
           // Grbl '$' system command
           report_status_message(system_execute_line(line));
+        } else if (line[0] == '#') {
+          // LLP buffer query command
+          printString("buf:");
+          print_uint8_base10(plan_get_block_buffer_available());
+          printString("\r\n");
+          report_status_message(STATUS_OK);
         } else if (sys.state & (STATE_ALARM | STATE_JOG)) {
           // Everything else is gcode. Block if in alarm or jog mode.
           report_status_message(STATUS_SYSTEM_GC_LOCK);

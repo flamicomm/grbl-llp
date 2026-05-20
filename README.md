@@ -68,6 +68,31 @@ Host → Recibe respuesta
 | Buffer RX | 128 bytes | 80 bytes (espacio para overhead LLP) |
 | Buffer TX | 100 bytes | 192 bytes (respuestas con framing) |
 | Control de spindle | Habilitado | **Deshabilitado** (libera pines D11, D12) |
+| Consulta de buffer | No disponible | **`#`** → responde `buf:N` |
+
+## Comando de consulta de buffer
+
+grbl-llp agrega el comando especial `#` para consultar el estado del planner buffer:
+
+```
+Host → LLP: "#"
+Grbl  → LLP: "buf:11\r\n" + "ok\r\n"
+```
+
+**Uso:**
+- Enviar `#` como payload de una trama LLP
+- Grbl responde con `buf:N` donde N = bloques disponibles (0-12)
+- Seguido de la respuesta estándar `ok`
+
+**Ejemplo de flujo con control de buffer:**
+
+```
+Host → "#"          → Grbl responde "buf:11" (11 libres de 12)
+Host → "G0 X10"     → Grbl responde "ok"
+Host → "#"          → Grbl responde "buf:10" (10 libres, 1 ocupado)
+Host → "G1 X20 Y30" → Grbl responde "ok"
+Host → "#"          → Grbl responde "buf:9"  (9 libres, 2 ocupados)
+```
 
 ## Archivos agregados
 
