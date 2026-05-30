@@ -1032,10 +1032,12 @@ uint8_t gc_execute_line(char *line)
     }     
   }
 
-  // [21. Program flow ]:
-  // M0,M1,M2,M30: Perform non-running program flow actions. During a program pause, the buffer may
-  // refill and can only be resumed by the cycle start run-time command.
-  gc_state.modal.program_flow = gc_block.modal.program_flow;
+  // [21. Program flow ]: REMOVED for PCB milling.
+  // M0/M1/M2/M30 are accepted but do nothing. No program pause or reset mechanics.
+  // This prevents the MCU from entering HOLD state and becoming unresponsive.
+
+  // TODO: % to denote start of program.
+  /*gc_state.modal.program_flow = gc_block.modal.program_flow;
   if (gc_state.modal.program_flow) {
     protocol_buffer_synchronize(); // Sync and finish all remaining buffered motions before moving on.
     if (gc_state.modal.program_flow == PROGRAM_FLOW_PAUSED) {
@@ -1080,7 +1082,7 @@ uint8_t gc_execute_line(char *line)
       report_feedback_message(MESSAGE_PROGRAM_END);
     }
     gc_state.modal.program_flow = PROGRAM_FLOW_RUNNING; // Reset program flow.
-  }
+  }*/
 
   // TODO: % to denote start of program.
 
