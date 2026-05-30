@@ -336,7 +336,7 @@
 // enable pin will output 5V for maximum RPM with 256 intermediate levels and 0V when disabled.
 // NOTE: IMPORTANT for Arduino Unos! When enabled, the Z-limit pin D11 and spindle enable pin D12 switch!
 // The hardware PWM output on pin D11 is required for variable spindle output voltages.
-#define VARIABLE_SPINDLE // Default enabled. Comment to disable.
+// #define VARIABLE_SPINDLE // Disabled for minimal CNC (no spindle control)
 
 // Used by variable spindle output only. This forces the PWM output to a minimum duty cycle when enabled.
 // The PWM pin will still read 0V when the spindle is disabled. Most users will not need this option, but
@@ -676,12 +676,22 @@
 
 
 /* ---------------------------------------------------------------------------------------
-   OEM Single File Configuration Option
+   LLP TRANSPORT LAYER CONFIGURATION:
 
-   Instructions: Paste the cpu_map and default setting definitions below without an enclosing
-   #ifdef. Comment out the CPU_MAP_xxx and DEFAULT_xxx defines at the top of this file, and
-   the compiler will ignore the contents of defaults.h and cpu_map.h and use the definitions
-   below.
+   LLP_MAX_PAYLOAD defines the maximum payload size for LLP frames. This must be large
+   enough to hold the longest G-code line (typically LINE_BUFFER_SIZE chars) plus the
+   FinalNode layer byte. Default is 96 bytes (80 chars + margin).
+   NOTE: Increasing this value increases RAM usage significantly on ATmega328P.
+   #define LLP_MAX_PAYLOAD 96
+
+   LLP_FRAME_TIMEOUT_MS defines the inter-byte timeout in milliseconds before the
+   parser resets. Default is 2000ms.
+   #define LLP_FRAME_TIMEOUT_MS 2000
+
+   TX_BUFFER_SIZE must be large enough to hold a complete LLP frame for the longest
+   response. The default of 160 should be sufficient for most status reports.
+   NOTE: This is already defined in serial.h but can be overridden here.
+   #define TX_BUFFER_SIZE 160
 */
 
 // Paste CPU_MAP definitions here.
