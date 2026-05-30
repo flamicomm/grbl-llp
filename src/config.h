@@ -161,7 +161,7 @@
 // Upon a successful probe cycle, this option provides immediately feedback of the probe coordinates
 // through an automatically generated message. If disabled, users can still access the last probe
 // coordinates through Grbl '$#' print parameters.
-#define MESSAGE_PROBE_COORDINATES // Enabled by default. Comment to disable.
+// #define MESSAGE_PROBE_COORDINATES // Disabled for minimal CNC (no probe).
 
 // Enables a second coolant control pin via the mist coolant g-code command M7 on the Arduino Uno
 // analog pin 4. Only use this option if you require a second coolant control pin.
@@ -227,7 +227,7 @@
 // before initialization. If it detects a problem and the hard limits setting is enabled, Grbl will
 // simply message the user to check the limits and enter an alarm state, rather than idle. Grbl will
 // not throw an alarm message.
-#define CHECK_LIMITS_AT_INIT
+// #define CHECK_LIMITS_AT_INIT // Disabled for minimal CNC (no limit switches).
 
 // ---------------------------------------------------------------------------------------
 // ADVANCED CONFIGURATION OPTIONS:
@@ -266,11 +266,11 @@
 // be sent without potential performance issues.
 // NOTE: The options below are here only provide a way to disable certain data fields if a unique
 // situation demands it, but be aware GUIs may depend on this data. If disabled, it may not be compatible.
-#define REPORT_FIELD_BUFFER_STATE // Default enabled. Comment to disable.
-#define REPORT_FIELD_PIN_STATE // Default enabled. Comment to disable.
-#define REPORT_FIELD_CURRENT_FEED_SPEED // Default enabled. Comment to disable.
-#define REPORT_FIELD_WORK_COORD_OFFSET // Default enabled. Comment to disable.
-#define REPORT_FIELD_OVERRIDES // Default enabled. Comment to disable.
+// #define REPORT_FIELD_BUFFER_STATE // Disabled: use # command instead.
+// #define REPORT_FIELD_PIN_STATE // Disabled for minimal CNC (no switches).
+// #define REPORT_FIELD_CURRENT_FEED_SPEED // Disabled to save flash.
+// #define REPORT_FIELD_WORK_COORD_OFFSET // Disabled to save flash.
+// #define REPORT_FIELD_OVERRIDES // Disabled: no overrides in minimal CNC.
 #define REPORT_FIELD_LINE_NUMBERS // Default enabled. Comment to disable.
 
 // Some status report data isn't necessary for realtime, only intermittently, because the values don't
@@ -517,7 +517,7 @@
 // NOTE: If disabled and to ensure Grbl can never alter the build info line, you'll also need to enable
 // the SETTING_RESTORE_ALL macro above and remove SETTINGS_RESTORE_BUILD_INFO from the mask.
 // NOTE: See the included grblWrite_BuildInfo.ino example file to write this string seperately.
-#define ENABLE_BUILD_INFO_WRITE_COMMAND // '$I=' Default enabled. Comment to disable.
+// #define ENABLE_BUILD_INFO_WRITE_COMMAND // '$I=' Disabled to save flash.
 
 // AVR processors require all interrupts to be disabled during an EEPROM write. This includes both
 // the stepper ISRs and serial comm ISRs. In the event of a long EEPROM write, this ISR pause can

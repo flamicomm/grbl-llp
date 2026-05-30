@@ -107,13 +107,13 @@ void protocol_main_loop()
               llp_stats_t llp_stats;
               llp_transport_get_stats(&llp_stats);
               printInteger(llp_stats.rx_frames);
-              printString("e");
+              printString(" e:");
               printInteger(llp_stats.rx_errors);
-              printString("t");
+              printString(" t:");
               printInteger(llp_stats.rx_timeouts);
-              printString("rd");
+              printString(" rd:");
               printInteger(llp_stats.rx_dropped);
-              printString("td");
+              printString(" td:");
               printInteger(llp_stats.tx_dropped);
           }
           printString("\r\n");
