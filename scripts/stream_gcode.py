@@ -19,16 +19,13 @@ import time
 import re
 import serial
 
-# Add path to the LLP library from esp8266-llp-bridge
-LLP_LIB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'esp8266-llp-bridge', 'test', 'integration')
-if os.path.isdir(LLP_LIB_PATH):
-    sys.path.insert(0, LLP_LIB_PATH)
+# Import local llp.py from the same scripts directory
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 try:
     import llp
 except ImportError:
-    print("ERROR: Could not import llp.py. Expected at:", LLP_LIB_PATH)
-    print("Please ensure esp8266-llp-bridge is cloned at the expected location.")
+    print("ERROR: Could not import llp.py. Ensure llp.py is in the same directory as this script:", _SCRIPT_DIR)
     sys.exit(1)
 
 
