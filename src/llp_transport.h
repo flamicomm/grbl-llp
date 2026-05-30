@@ -31,4 +31,17 @@ void llp_transport_tx_byte(uint8_t byte);
 void llp_transport_tx_flush(void);
 void llp_transport_tx_reset(void);
 
+typedef struct {
+    uint16_t rx_frames;
+    uint16_t rx_errors;
+    uint16_t rx_timeouts;
+    uint16_t rx_dropped;
+    uint16_t tx_dropped;
+    uint16_t rx_raw_bytes;
+} llp_stats_t;
+
+void llp_transport_get_stats(llp_stats_t *stats);
+void llp_transport_reset_stats(void);
+unsigned long llp_transport_get_ms(void);
+
 #endif

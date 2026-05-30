@@ -40,11 +40,11 @@
 #define TX_RING_BUFFER (TX_BUFFER_SIZE+1)
 
 extern uint8_t serial_rx_buffer[RX_RING_BUFFER];
-extern uint8_t serial_rx_buffer_head;
+extern volatile uint8_t serial_rx_buffer_head;
 extern volatile uint8_t serial_rx_buffer_tail;
 
 extern uint8_t serial_tx_buffer[TX_RING_BUFFER];
-extern uint8_t serial_tx_buffer_head;
+extern volatile uint8_t serial_tx_buffer_head;
 extern volatile uint8_t serial_tx_buffer_tail;
 
 

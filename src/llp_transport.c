@@ -27,6 +27,13 @@ static volatile uint8_t llp_tx_line_idx = 0;
 
 static volatile unsigned long llp_ms_counter = 0;
 
+static volatile uint16_t llp_rx_frame_count = 0;
+static volatile uint16_t llp_rx_error_count = 0;
+static volatile uint16_t llp_rx_timeout_count = 0;
+static volatile uint16_t llp_rx_dropped_count = 0;
+static volatile uint16_t llp_tx_dropped_count = 0;
+static volatile uint16_t llp_rx_raw_bytes = 0;
+
 void llp_transport_init(void)
 {
     llp_parser_init(&llp_rx_parser);
@@ -44,11 +51,14 @@ ISR(TIMER2_OVF_vect)
 
 static void llp_rx_buffer_write(uint8_t data)
 {
-    uint8_t next_head = serial_rx_buffer_head + 1;
+    uint8_t head = serial_rx_buffer_head;
+    uint8_t next_head = head + 1;
     if (next_head == RX_RING_BUFFER) { next_head = 0; }
     if (next_head != serial_rx_buffer_tail) {
-        serial_rx_buffer[serial_rx_buffer_head] = data;
+        serial_rx_buffer[head] = data;
         serial_rx_buffer_head = next_head;
+    } else {
+        llp_rx_dropped_count++;
     }
 }
 
@@ -150,6 +160,7 @@ static void llp_process_payload(uint8_t *payload, uint16_t len)
 
 void llp_transport_rx_byte(uint8_t byte)
 {
+    llp_rx_raw_bytes++;
     unsigned long now = llp_ms_counter;
     int result = llp_parser_process_byte(&llp_rx_parser, byte, now);
 
@@ -158,7 +169,13 @@ void llp_transport_rx_byte(uint8_t byte)
         int payload_len = llp_get_final_payload(&llp_rx_parser.frame,
                                                  payload_buf, sizeof(payload_buf));
         if (payload_len > 0) {
+            llp_rx_frame_count++;
             llp_process_payload(payload_buf, (uint16_t)payload_len);
+        }
+    } else if (result < 0) {
+        llp_rx_error_count++;
+        if (llp_rx_parser.error_code == LLP_ERR_TIMEOUT) {
+            llp_rx_timeout_count++;
         }
     }
 }
@@ -193,8 +210,14 @@ void llp_transport_tx_flush(void)
     for (size_t i = 0; i < frame_len; i++) {
         uint8_t next_head = serial_tx_buffer_head + 1;
         if (next_head == TX_RING_BUFFER) { next_head = 0; }
-        while (next_head == serial_tx_buffer_tail) {
-            if (sys_rt_exec_state & EXEC_RESET) { return; }
+        if (next_head == serial_tx_buffer_tail) {
+            // TX buffer full - discard remaining bytes rather than blocking.
+            // This prevents the main loop from stalling, which would cause
+            // incoming serial data to be lost. Partial frames will be
+            // discarded by the receiving LLP parser via CRC check.
+            llp_tx_dropped_count++;
+            UCSR0B |= (1 << UDRIE0);
+            return;
         }
         serial_tx_buffer[serial_tx_buffer_head] = frame_buf[i];
         serial_tx_buffer_head = next_head;
@@ -206,4 +229,40 @@ void llp_transport_tx_flush(void)
 void llp_transport_tx_reset(void)
 {
     llp_tx_line_idx = 0;
+}
+
+void llp_transport_get_stats(llp_stats_t *stats)
+{
+    uint8_t sreg = SREG;
+    cli();
+    stats->rx_frames = llp_rx_frame_count;
+    stats->rx_errors = llp_rx_error_count;
+    stats->rx_timeouts = llp_rx_timeout_count;
+    stats->rx_dropped = llp_rx_dropped_count;
+    stats->tx_dropped = llp_tx_dropped_count;
+    stats->rx_raw_bytes = llp_rx_raw_bytes;
+    SREG = sreg;
+}
+
+void llp_transport_reset_stats(void)
+{
+    uint8_t sreg = SREG;
+    cli();
+    llp_rx_frame_count = 0;
+    llp_rx_error_count = 0;
+    llp_rx_timeout_count = 0;
+    llp_rx_dropped_count = 0;
+    llp_tx_dropped_count = 0;
+    llp_rx_raw_bytes = 0;
+    SREG = sreg;
+}
+
+unsigned long llp_transport_get_ms(void)
+{
+    unsigned long ms;
+    uint8_t sreg = SREG;
+    cli();
+    ms = llp_ms_counter;
+    SREG = sreg;
+    return ms;
 }
