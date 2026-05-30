@@ -179,7 +179,8 @@ uint8_t gc_execute_line(char *line)
             break;
           case 17: case 18: case 19:
             word_bit = MODAL_GROUP_G2;
-            gc_block.modal.plane_select = int_value - 17;
+            // For PCB milling, always use XY plane (G17). G18/G19 accepted but ignored.
+            gc_block.modal.plane_select = PLANE_SELECT_XY;
             break;
           case 90: case 91:
             if (mantissa == 0) {
@@ -206,20 +207,16 @@ uint8_t gc_execute_line(char *line)
             // to support G40 commands that often appear in g-code program headers to setup defaults.
             // gc_block.modal.cutter_comp = CUTTER_COMP_DISABLE; // G40
             break;
-          case 43: case 49:
-            word_bit = MODAL_GROUP_G8;
-            // NOTE: The NIST g-code standard vaguely states that when a tool length offset is changed,
-            // there cannot be any axis motion or coordinate offsets updated. Meaning G43, G43.1, and G49
-            // all are explicit axis commands, regardless if they require axis words or not.
-            if (axis_command) { FAIL(STATUS_GCODE_AXIS_COMMAND_CONFLICT); } // [Axis word/command conflict] }
-            axis_command = AXIS_COMMAND_TOOL_LENGTH_OFFSET;
-            if (int_value == 49) { // G49
-              gc_block.modal.tool_length = TOOL_LENGTH_OFFSET_CANCEL;
-            } else if (mantissa == 10) { // G43.1
-              gc_block.modal.tool_length = TOOL_LENGTH_OFFSET_ENABLE_DYNAMIC;
-            } else { FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); } // [Unsupported G43.x command]
-            mantissa = 0; // Set to zero to indicate valid non-integer G command.
-            break;
+          // NOTE: Tool length offset (G43.1/G49) removed for PCB milling - no tool changer.
+          // case 43: case 49:
+          //   word_bit = MODAL_GROUP_G8;
+          //   if (axis_command) { FAIL(STATUS_GCODE_AXIS_COMMAND_CONFLICT); }
+          //   axis_command = AXIS_COMMAND_TOOL_LENGTH_OFFSET;
+          //   if (int_value == 49) { gc_block.modal.tool_length = TOOL_LENGTH_OFFSET_CANCEL; }
+          //   else if (mantissa == 10) { gc_block.modal.tool_length = TOOL_LENGTH_OFFSET_ENABLE_DYNAMIC; }
+          //   else { FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); }
+          //   mantissa = 0;
+          //   break;
           case 54: case 55: case 56: case 57: case 58: case 59:
             // NOTE: G59.x are not supported. (But their int_values would be 60, 61, and 62.)
             word_bit = MODAL_GROUP_G12;
@@ -485,16 +482,12 @@ uint8_t gc_execute_line(char *line)
   //   NOTE: Since cutter radius compensation is never enabled, these G40 errors don't apply. Grbl supports G40
   //   only for the purpose to not error when G40 is sent with a g-code program header to setup the default modes.
 
-  // [14. Cutter length compensation ]: G43 NOT SUPPORTED, but G43.1 and G49 are.
-  // [G43.1 Errors]: Motion command in same line.
-  //   NOTE: Although not explicitly stated so, G43.1 should be applied to only one valid
-  //   axis that is configured (in config.h). There should be an error if the configured axis
-  //   is absent or if any of the other axis words are present.
-  if (axis_command == AXIS_COMMAND_TOOL_LENGTH_OFFSET ) { // Indicates called in block.
-    if (gc_block.modal.tool_length == TOOL_LENGTH_OFFSET_ENABLE_DYNAMIC) {
-      if (axis_words ^ (1<<TOOL_LENGTH_OFFSET_AXIS)) { FAIL(STATUS_GCODE_G43_DYNAMIC_AXIS_ERROR); }
-    }
-  }
+  // [14. Cutter length compensation ]: REMOVED for PCB milling (no tool changer).
+  // if (axis_command == AXIS_COMMAND_TOOL_LENGTH_OFFSET ) {
+  //   if (gc_block.modal.tool_length == TOOL_LENGTH_OFFSET_ENABLE_DYNAMIC) {
+  //     if (axis_words ^ (1<<TOOL_LENGTH_OFFSET_AXIS)) { FAIL(STATUS_GCODE_G43_DYNAMIC_AXIS_ERROR); }
+  //   }
+  // }
 
   // [15. Coordinate system selection ]: *N/A. Error, if cutter radius comp is active.
   // TODO: An EEPROM read of the coordinate data may require a buffer sync when the cycle
@@ -546,11 +539,11 @@ uint8_t gc_execute_line(char *line)
       for (idx=0; idx<N_AXIS; idx++) { // Axes indices are consistent, so loop may be used.
         // Update axes defined only in block. Always in machine coordinates. Can change non-active system.
         if (bit_istrue(axis_words,bit(idx)) ) {
-          if (gc_block.values.l == 20) {
+            if (gc_block.values.l == 20) {
             // L20: Update coordinate system axis at current position (with modifiers) with programmed value
-            // WPos = MPos - WCS - G92 - TLO  ->  WCS = MPos - G92 - TLO - WPos
+            // WPos = MPos - WCS - G92  ->  WCS = MPos - G92 - WPos (TLO removed for PCB)
             gc_block.values.ijk[idx] = gc_state.position[idx]-gc_state.coord_offset[idx]-gc_block.values.xyz[idx];
-            if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.ijk[idx] -= gc_state.tool_length_offset; }
+            // if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.ijk[idx] -= gc_state.tool_length_offset; }
           } else {
             // L2: Update coordinate system axis to programmed value.
             gc_block.values.ijk[idx] = gc_block.values.xyz[idx];
@@ -566,9 +559,9 @@ uint8_t gc_execute_line(char *line)
       // active coordinate system is selected, but is still active unless G92.1 disables it.
       for (idx=0; idx<N_AXIS; idx++) { // Axes indices are consistent, so loop may be used.
         if (bit_istrue(axis_words,bit(idx)) ) {
-          // WPos = MPos - WCS - G92 - TLO  ->  G92 = MPos - WCS - TLO - WPos
+          // WPos = MPos - WCS - G92  ->  G92 = MPos - WCS - WPos (TLO removed for PCB)
           gc_block.values.xyz[idx] = gc_state.position[idx]-block_coord_system[idx]-gc_block.values.xyz[idx];
-          if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.xyz[idx] -= gc_state.tool_length_offset; }
+          // if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.xyz[idx] -= gc_state.tool_length_offset; }
         } else {
           gc_block.values.xyz[idx] = gc_state.coord_offset[idx];
         }
@@ -580,8 +573,9 @@ uint8_t gc_execute_line(char *line)
       // At this point, the rest of the explicit axis commands treat the axis values as the traditional
       // target position with the coordinate system offsets, G92 offsets, absolute override, and distance
       // modes applied. This includes the motion mode commands. We can now pre-compute the target position.
-      // NOTE: Tool offsets may be appended to these conversions when/if this feature is added.
-      if (axis_command != AXIS_COMMAND_TOOL_LENGTH_OFFSET ) { // TLO block any axis command.
+      // NOTE: Tool length offset removed for PCB milling.
+      // if (axis_command != AXIS_COMMAND_TOOL_LENGTH_OFFSET ) { // TLO block any axis command.
+      if (1) {
         if (axis_words) {
           for (idx=0; idx<N_AXIS; idx++) { // Axes indices are consistent, so loop may be used to save flash space.
             if ( bit_isfalse(axis_words,bit(idx)) ) {
@@ -593,7 +587,7 @@ uint8_t gc_execute_line(char *line)
                 // Apply coordinate offsets based on distance mode.
                 if (gc_block.modal.distance == DISTANCE_MODE_ABSOLUTE) {
                   gc_block.values.xyz[idx] += block_coord_system[idx] + gc_state.coord_offset[idx];
-                  if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.xyz[idx] += gc_state.tool_length_offset; }
+                  // if (idx == TOOL_LENGTH_OFFSET_AXIS) { gc_block.values.xyz[idx] += gc_state.tool_length_offset; }
                 } else {  // Incremental mode
                   gc_block.values.xyz[idx] += gc_state.position[idx];
                 }
@@ -913,49 +907,15 @@ uint8_t gc_execute_line(char *line)
   gc_state.feed_rate = gc_block.values.f; // Always copy this value. See feed rate error-checking.
   pl_data->feed_rate = gc_state.feed_rate; // Record data for planner use.
 
-  // [4. Set spindle speed ]:
-  if ((gc_state.spindle_speed != gc_block.values.s) || bit_istrue(gc_parser_flags,GC_PARSER_LASER_FORCE_SYNC)) {
-    if (gc_state.modal.spindle != SPINDLE_DISABLE) { 
-      #ifdef VARIABLE_SPINDLE
-        if (bit_isfalse(gc_parser_flags,GC_PARSER_LASER_ISMOTION)) {
-          if (bit_istrue(gc_parser_flags,GC_PARSER_LASER_DISABLE)) {
-             spindle_sync(gc_state.modal.spindle, 0.0);
-          } else { spindle_sync(gc_state.modal.spindle, gc_block.values.s); }
-        }
-      #else
-        spindle_sync(gc_state.modal.spindle, 0.0);
-      #endif
-    }
-    gc_state.spindle_speed = gc_block.values.s; // Update spindle speed state.
-  }
-  // NOTE: Pass zero spindle speed for all restricted laser motions.
-  if (bit_isfalse(gc_parser_flags,GC_PARSER_LASER_DISABLE)) {
-    pl_data->spindle_speed = gc_state.spindle_speed; // Record data for planner use. 
-  } // else { pl_data->spindle_speed = 0.0; } // Initialized as zero already.
-  
-  // [5. Select tool ]: NOT SUPPORTED. Only tracks tool value.
+  // [4-8. Spindle/Coolant/Tool ]: REMOVED for PCB milling (manual spindle, no coolant).
+  // Keep parser state updated but do not execute syncs.
+  gc_state.spindle_speed = gc_block.values.s;
   gc_state.tool = gc_block.values.t;
-
-  // [6. Change tool ]: NOT SUPPORTED
-
-  // [7. Spindle control ]:
-  if (gc_state.modal.spindle != gc_block.modal.spindle) {
-    // Update spindle control and apply spindle speed when enabling it in this block.
-    // NOTE: All spindle state changes are synced, even in laser mode. Also, pl_data,
-    // rather than gc_state, is used to manage laser state for non-laser motions.
-    spindle_sync(gc_block.modal.spindle, pl_data->spindle_speed);
-    gc_state.modal.spindle = gc_block.modal.spindle;
-  }
-  pl_data->condition |= gc_state.modal.spindle; // Set condition flag for planner use.
-
-  // [8. Coolant control ]:
-  if (gc_state.modal.coolant != gc_block.modal.coolant) {
-    // NOTE: Coolant M-codes are modal. Only one command per line is allowed. But, multiple states
-    // can exist at the same time, while coolant disable clears all states.
-    coolant_sync(gc_block.modal.coolant);
-    gc_state.modal.coolant = gc_block.modal.coolant;
-  }
-  pl_data->condition |= gc_state.modal.coolant; // Set condition flag for planner use.
+  gc_state.modal.spindle = gc_block.modal.spindle;
+  gc_state.modal.coolant = gc_block.modal.coolant;
+  // Keep condition flags for planner compatibility.
+  pl_data->condition |= gc_state.modal.spindle;
+  pl_data->condition |= gc_state.modal.coolant;
 
   // [9. Override control ]: NOT SUPPORTED. Always enabled. Except for a Grbl-only parking control.
   #ifdef ENABLE_PARKING_OVERRIDE_CONTROL
@@ -977,20 +937,15 @@ uint8_t gc_execute_line(char *line)
   // [13. Cutter radius compensation ]: G41/42 NOT SUPPORTED
   // gc_state.modal.cutter_comp = gc_block.modal.cutter_comp; // NOTE: Not needed since always disabled.
 
-  // [14. Cutter length compensation ]: G43.1 and G49 supported. G43 NOT SUPPORTED.
-  // NOTE: If G43 were supported, its operation wouldn't be any different from G43.1 in terms
-  // of execution. The error-checking step would simply load the offset value into the correct
-  // axis of the block XYZ value array.
-  if (axis_command == AXIS_COMMAND_TOOL_LENGTH_OFFSET ) { // Indicates a change.
-    gc_state.modal.tool_length = gc_block.modal.tool_length;
-    if (gc_state.modal.tool_length == TOOL_LENGTH_OFFSET_CANCEL) { // G49
-      gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS] = 0.0;
-    } // else G43.1
-    if ( gc_state.tool_length_offset != gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS] ) {
-      gc_state.tool_length_offset = gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS];
-      system_flag_wco_change();
-    }
-  }
+  // [14. Cutter length compensation ]: REMOVED for PCB milling (no tool changer).
+  // if (axis_command == AXIS_COMMAND_TOOL_LENGTH_OFFSET ) {
+  //   gc_state.modal.tool_length = gc_block.modal.tool_length;
+  //   if (gc_state.modal.tool_length == TOOL_LENGTH_OFFSET_CANCEL) { gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS] = 0.0; }
+  //   if ( gc_state.tool_length_offset != gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS] ) {
+  //     gc_state.tool_length_offset = gc_block.values.xyz[TOOL_LENGTH_OFFSET_AXIS];
+  //     system_flag_wco_change();
+  //   }
+  // }
 
   // [15. Coordinate system selection ]:
   if (gc_state.modal.coord_select != gc_block.modal.coord_select) {
@@ -1115,12 +1070,12 @@ uint8_t gc_execute_line(char *line)
         sys.spindle_speed_ovr = DEFAULT_SPINDLE_SPEED_OVERRIDE;
       #endif
 
-      // Execute coordinate change and spindle/coolant stop.
+      // Execute coordinate change. Spindle/coolant stop removed for PCB milling.
       if (sys.state != STATE_CHECK_MODE) {
         if (!(settings_read_coord_data(gc_state.modal.coord_select,gc_state.coord_system))) { FAIL(STATUS_SETTING_READ_FAIL); }
         system_flag_wco_change(); // Set to refresh immediately just in case something altered.
-        spindle_set_state(SPINDLE_DISABLE,0.0);
-        coolant_set_state(COOLANT_DISABLE);
+        // spindle_set_state(SPINDLE_DISABLE,0.0);
+        // coolant_set_state(COOLANT_DISABLE);
       }
       report_feedback_message(MESSAGE_PROGRAM_END);
     }

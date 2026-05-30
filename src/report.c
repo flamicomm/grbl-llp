@@ -201,8 +201,9 @@ void report_grbl_settings() {
   report_util_float_setting(25,settings.homing_seek_rate,N_DECIMAL_SETTINGVALUE);
   report_util_uint8_setting(26,settings.homing_debounce_delay);
   report_util_float_setting(27,settings.homing_pulloff,N_DECIMAL_SETTINGVALUE);
-  report_util_float_setting(30,settings.rpm_max,N_DECIMAL_RPMVALUE);
-  report_util_float_setting(31,settings.rpm_min,N_DECIMAL_RPMVALUE);
+  // RPM settings removed for PCB milling (no spindle control).
+  // report_util_float_setting(30,settings.rpm_max,N_DECIMAL_RPMVALUE);
+  // report_util_float_setting(31,settings.rpm_min,N_DECIMAL_RPMVALUE);
   #ifdef VARIABLE_SPINDLE
     report_util_uint8_setting(32,bit_istrue(settings.flags,BITFLAG_LASER_MODE));
   #else
@@ -225,19 +226,11 @@ void report_grbl_settings() {
 }
 
 
-// Prints current probe parameters. Upon a probe command, these parameters are updated upon a
-// successful probe or upon a failed probe with the G38.3 without errors command (if supported).
-// These values are retained until Grbl is power-cycled, whereby they will be re-zeroed.
+// Prints current probe parameters. Removed for PCB milling to save flash.
+// Probe functionality is kept; only the reporting is removed.
 void report_probe_parameters()
 {
-  // Report in terms of machine position.
-  printPgmString(PSTR("[PRB:"));
-  float print_position[N_AXIS];
-  system_convert_array_steps_to_mpos(print_position,sys_probe_position);
-  report_util_axis_values(print_position);
-  serial_write(':');
-  print_uint8_base10(sys.probe_succeeded);
-  report_util_feedback_line_feed();
+  // Stub: probe report removed for PCB milling.
 }
 
 
@@ -309,26 +302,14 @@ void report_gcode_modes()
     }
   }
 
-  report_util_gcode_modes_M();
-  switch (gc_state.modal.spindle) {
-    case SPINDLE_ENABLE_CW : serial_write('3'); break;
-    case SPINDLE_ENABLE_CCW : serial_write('4'); break;
-    case SPINDLE_DISABLE : serial_write('5'); break;
-  }
-
-  #ifdef ENABLE_M7
-    if (gc_state.modal.coolant) { // Note: Multiple coolant states may be active at the same time.
-      if (gc_state.modal.coolant & PL_COND_FLAG_COOLANT_MIST) { report_util_gcode_modes_M(); serial_write('7'); }
-      if (gc_state.modal.coolant & PL_COND_FLAG_COOLANT_FLOOD) { report_util_gcode_modes_M(); serial_write('8'); }
-    } else { report_util_gcode_modes_M(); serial_write('9'); }
-  #else
-    report_util_gcode_modes_M();
-    if (gc_state.modal.coolant) { serial_write('8'); }
-    else { serial_write('9'); }
-  #endif
+  // Spindle/coolant reporting removed for PCB milling (manual spindle, no coolant).
+  // report_util_gcode_modes_M();
+  // switch (gc_state.modal.spindle) { ... }
+  // report_util_gcode_modes_M();
+  // if (gc_state.modal.coolant) { serial_write('8'); } else { serial_write('9'); }
 
   #ifdef ENABLE_PARKING_OVERRIDE_CONTROL
-    if (sys.override_ctrl == OVERRIDE_PARKING_MOTION) { 
+    if (sys.override_ctrl == OVERRIDE_PARKING_MOTION) {
       report_util_gcode_modes_M();
       print_uint8_base10(56);
     }
@@ -340,10 +321,11 @@ void report_gcode_modes()
   printPgmString(PSTR(" F"));
   printFloat_RateValue(gc_state.feed_rate);
 
-  #ifdef VARIABLE_SPINDLE
-    printPgmString(PSTR(" S"));
-    printFloat(gc_state.spindle_speed,N_DECIMAL_RPMVALUE);
-  #endif
+  // Spindle speed reporting removed for PCB milling.
+  // #ifdef VARIABLE_SPINDLE
+  //   printPgmString(PSTR(" S"));
+  //   printFloat(gc_state.spindle_speed,N_DECIMAL_RPMVALUE);
+  // #endif
 
   report_util_feedback_line_feed();
 }

@@ -29,6 +29,8 @@
 
 static char line[LINE_BUFFER_SIZE]; // Line to be executed. Zero-terminated.
 
+static unsigned long last_keepalive_ms = 0;
+
 static void protocol_exec_rt_suspend();
 
 
@@ -96,6 +98,26 @@ void protocol_main_loop()
         } else if (line[0] == '$') {
           // Grbl '$' system command
           report_status_message(system_execute_line(line));
+        } else if (line[0] == '#') {
+          // LLP buffer query and debug stats
+          printString("buf:");
+          print_uint8_base10(plan_get_block_buffer_available());
+          printString(" rx:");
+          {
+              llp_stats_t llp_stats;
+              llp_transport_get_stats(&llp_stats);
+              printInteger(llp_stats.rx_frames);
+              printString(" e:");
+              printInteger(llp_stats.rx_errors);
+              printString(" t:");
+              printInteger(llp_stats.rx_timeouts);
+              printString(" rd:");
+              printInteger(llp_stats.rx_dropped);
+              printString(" td:");
+              printInteger(llp_stats.tx_dropped);
+          }
+          printString("\r\n");
+          report_status_message(STATUS_OK);
         } else if (sys.state & (STATE_ALARM | STATE_JOG)) {
           // Everything else is gcode. Block if in alarm or jog mode.
           report_status_message(STATUS_SYSTEM_GC_LOCK);
@@ -158,6 +180,31 @@ void protocol_main_loop()
 
     protocol_execute_realtime();  // Runtime command check point.
     if (sys.abort) { return; } // Bail to main() program loop to reset system.
+
+// Keep-alive: send LLP stats every 1 second
+    {
+        unsigned long now = llp_transport_get_ms();
+        if (now - last_keepalive_ms >= 1000) {
+            last_keepalive_ms = now;
+            llp_stats_t st;
+            llp_transport_get_stats(&st);
+            printString("[KA] st:");
+            print_uint8_base10(sys.state);
+            printString(" rx:");
+            printInteger(st.rx_frames);
+            printString(" e:");
+            printInteger(st.rx_errors);
+            printString(" t:");
+            printInteger(st.rx_timeouts);
+            printString(" rd:");
+            printInteger(st.rx_dropped);
+            printString(" td:");
+            printInteger(st.tx_dropped);
+            printString(" rb:");
+            printInteger(st.rx_raw_bytes);
+            printString("\r\n");
+        }
+    }
   }
 
   return; /* Never reached */
@@ -223,16 +270,19 @@ void protocol_exec_rt_system()
     sys.state = STATE_ALARM; // Set system alarm state
     report_alarm_message(rt_exec);
     // Halt everything upon a critical event flag. Currently hard and soft limits flag this.
-    if ((rt_exec == EXEC_ALARM_HARD_LIMIT) || (rt_exec == EXEC_ALARM_SOFT_LIMIT)) {
+if ((rt_exec == EXEC_ALARM_HARD_LIMIT) || (rt_exec == EXEC_ALARM_SOFT_LIMIT)) {
       report_feedback_message(MESSAGE_CRITICAL_EVENT);
       system_clear_exec_state_flag(EXEC_RESET); // Disable any existing reset
-      do {
-        // Block everything, except reset and status reports, until user issues reset or power
-        // cycles. Hard limits typically occur while unattended or not paying attention. Gives
-        // the user and a GUI time to do what is needed before resetting, like killing the
-        // incoming stream. The same could be said about soft limits. While the position is not
-        // lost, continued streaming could cause a serious crash if by chance it gets executed.
-      } while (bit_isfalse(sys_rt_exec_state,EXEC_RESET));
+      {
+        unsigned long last_ka = 0;
+        do {
+          unsigned long now = llp_transport_get_ms();
+          if (now - last_ka >= 1000) {
+            last_ka = now;
+            printString("[KA] ALARM\r\n");
+          }
+        } while (bit_isfalse(sys_rt_exec_state,EXEC_RESET));
+      }
     }
     system_clear_exec_alarm(); // Clear alarm
   }

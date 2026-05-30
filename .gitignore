@@ -4,4 +4,24 @@
 *.DS_Store
 *.d
 
-README.md
+.pio
+.vscode
+build
+dist
+__pycache__
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.pyc
+*.pyo
+*.egg-info
+*.egg
+*.zip
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.7z
+*.gz
+*.bz2
