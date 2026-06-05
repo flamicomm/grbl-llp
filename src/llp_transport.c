@@ -210,14 +210,20 @@ void llp_transport_tx_flush(void)
     for (size_t i = 0; i < frame_len; i++) {
         uint8_t next_head = serial_tx_buffer_head + 1;
         if (next_head == TX_RING_BUFFER) { next_head = 0; }
-        if (next_head == serial_tx_buffer_tail) {
-            // TX buffer full - discard remaining bytes rather than blocking.
-            // This prevents the main loop from stalling, which would cause
-            // incoming serial data to be lost. Partial frames will be
-            // discarded by the receiving LLP parser via CRC check.
-            llp_tx_dropped_count++;
+        // Wait for space in the TX ring buffer. The SERIAL_UDRE ISR drains
+        // bytes to the UART at 115200 baud (~86 us/byte). This spin-loop is
+        // safe because: (a) interrupts remain enabled so the ISR runs, and
+        // (b) this path is only reached from the main loop in IDLE state
+        // (e.g. $$ report). A safety counter prevents infinite stalls if
+        // the UART hardware fails.
+        uint16_t spin = 10000;
+        while (next_head == serial_tx_buffer_tail) {
             UCSR0B |= (1 << UDRIE0);
-            return;
+            if (--spin == 0) {
+                llp_tx_dropped_count++;
+                UCSR0B |= (1 << UDRIE0);
+                return;
+            }
         }
         serial_tx_buffer[serial_tx_buffer_head] = frame_buf[i];
         serial_tx_buffer_head = next_head;
