@@ -155,7 +155,6 @@ static void llp_process_payload(uint8_t *payload, uint16_t len)
                 break;
         }
     }
-    llp_rx_buffer_write('\n');
 }
 
 void llp_transport_rx_byte(uint8_t byte)
