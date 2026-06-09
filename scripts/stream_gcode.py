@@ -8,6 +8,10 @@ Usage:
 The script sends each G-code line wrapped in LLP frames to the Arduino,
 waits for 'ok' or 'error:' responses, and reports any failures.
 
+Note: Grbl-LLP uses LLP frames as command delimiters instead of '\\n'.
+      This script ensures each command is terminated with '\\n' so the
+      G-code is processed correctly (LLP frame = command, '\\n' = terminator).
+
 Intentional stop commands (M0, M1, M2, M30) are skipped with a warning.
 Unsupported commands that return 'error:' are logged but do not stop the stream.
 """
@@ -22,11 +26,9 @@ import serial
 # Import local llp.py from the same scripts directory
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-try:
-    import llp
-except ImportError:
-    print("ERROR: Could not import llp.py. Ensure llp.py is in the same directory as this script:", _SCRIPT_DIR)
-    sys.exit(1)
+sys.path.insert(0, _SCRIPT_DIR)
+
+import llp
 
 
 DEFAULT_PORT = '/dev/ttyUSB0'
@@ -37,7 +39,15 @@ INTENTIONAL_STOP_CMDS = {'M0', 'M1', 'M2', 'M30'}
 
 
 def send_frame(ser, text):
-    """Send text as an LLP frame over serial."""
+    """Send text as an LLP frame over serial.
+    
+    The text is expected to end with '\\n' (G-code line terminator).
+    If it doesn't, we add it to ensure proper processing.
+    """
+    # Ensure text ends with newline for Grbl processing
+    if not text.endswith('\n'):
+        text = text + '\n'
+    
     frame = llp.encode(text.encode('utf-8'))
     ser.write(frame)
     ser.flush()
@@ -64,8 +74,13 @@ def read_responses(ser, parser, timeout_sec):
 
 
 def clean_line(line):
-    """Strip comments and whitespace from a G-code line."""
-    stripped = line.strip()
+    """Strip comments and whitespace from a G-code line.
+    
+    Returns the cleaned line without trailing newline comments or whitespace,
+    but preserves the original line end for G-code processing.
+    """
+    stripped = line.rstrip('\r\n')
+    stripped = stripped.strip()
     if not stripped:
         return None
     if stripped.startswith('(') and stripped.endswith(')'):
@@ -173,7 +188,6 @@ def stream_gcode(filepath, port, baud):
             sent += 1
             token = get_cmd_token(cmd)
 
-            # Skip intentional stop commands
             if token in INTENTIONAL_STOP_CMDS:
                 skipped_count += 1
                 print(f"[SKIP] Line {line_num}: '{cmd}' (intentional stop command)")
@@ -181,10 +195,9 @@ def stream_gcode(filepath, port, baud):
 
             is_motion = is_motion_command(cmd)
 
-            # Send command
+            print(f"[SEND] Line {line_num}: '{cmd}'")
             send_frame(ser, cmd)
 
-            # Wait for 'ok' or 'error:'
             got_ok = False
             got_error = False
             base_timeout = 12.0 if is_motion else 5.0
@@ -208,12 +221,10 @@ def stream_gcode(filepath, port, baud):
                     break
                 elapsed = time.time() - start_wait
 
-            # If no ok/error yet, check state with '?'
             if not got_ok and not got_error:
                 status = check_state(ser, parser)
                 if status:
                     if any(s in status for s in ('Run', 'Hold', 'Cycle', 'Jog')):
-                        # Still executing, give more time
                         extended_wait = 25.0 if is_motion else 10.0
                         extra_start = time.time()
                         while time.time() - extra_start < extended_wait:
@@ -231,17 +242,15 @@ def stream_gcode(filepath, port, baud):
                             if got_ok or got_error:
                                 break
 
-                            # Poll state every 2s during extended wait
-                            elapsed_extra = time.time() - extra_start
-                            if elapsed_extra > 2.0 and elapsed_extra % 2.0 < 0.6:
-                                st = check_state(ser, parser)
-                                if st and 'Idle' in st:
-                                    got_ok = True
-                                    break
+                        elapsed_extra = time.time() - extra_start
+                        if elapsed_extra > 2.0 and elapsed_extra % 2.0 < 0.6:
+                            st = check_state(ser, parser)
+                            if st and 'Idle' in st:
+                                got_ok = True
+                                break
                     else:
                         pass
 
-            # Final check - if still no ok/error, ping with '#'
             if not got_ok and not got_error:
                 buf_info = check_buffer(ser, parser)
                 if buf_info:
@@ -261,18 +270,16 @@ def stream_gcode(filepath, port, baud):
 
             if got_error:
                 print(f"[ERROR] Line {line_num}: '{cmd}' -> {errors_detail[-1][2]}")
-                # Continue streaming — unsupported commands are not fatal
 
             if got_ok:
                 ok_count += 1
+                print(f"[OK] Line {line_num} - Success")
 
-            # Progress update
             if time.time() - last_progress > 3.0 or sent % 100 == 0 or sent == total_commands:
                 pct = (sent / total_commands) * 100
                 print(f"  Progress: {sent}/{total_commands} ({pct:.1f}%) OK={ok_count} ERR={error_count} SKIP={skipped_count}")
                 last_progress = time.time()
 
-        # Drain trailing responses
         print("\nDraining trailing responses...")
         time.sleep(0.5)
         resps = read_responses(ser, parser, timeout_sec=2.0)
@@ -283,7 +290,6 @@ def stream_gcode(filepath, port, baud):
             elif r_stripped.lower().startswith('error:'):
                 error_count += 1
 
-        # Final health check
         print("\nFinal health check...")
         buf_info = check_buffer(ser, parser)
         status = check_state(ser, parser)
