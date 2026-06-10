@@ -1,24 +1,59 @@
 #!/usr/bin/env bash
-# post-commit — auto-update CHANGELOG.md when a new tag is created on master
+# post-commit — auto-update CHANGELOG.md on merge/tag
 #
-# Detects if HEAD now has a tag that HEAD~1 did not (i.e., a tag was just
-# created for the current commit).  If so, generates changelog entries
-# between the previous tag and the new one.
+# Behaviour per branch:
+#   master + new tag  → generate entries, amend commit
+#   master + merge    → generate entries, amend merge commit
+#   dev               → generate entries (preview only, no amend)
+#   other             → skip
 #
-# Install with:
+# Install:
 #   git config core.hooksPath .githooks
 #   chmod +x .githooks/post-commit
 
 set -euo pipefail
 
 BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-[ "$BRANCH" != "master" ] && exit 0
+case "$BRANCH" in
+    master|dev) ;;
+    *) exit 0 ;;
+esac
 
-# Get tags at HEAD and HEAD~1
+cd "$(git rev-parse --show-toplevel)"
+
+# Find previous release tag (latest tag reachable from this commit's ancestry).
+# Try several strategies in order of preference:
+#   1. HEAD~1 (the immediate parent)
+#   2. `master` branch tip (useful on `dev` when no tag is in dev's history)
+#   3. `origin/master` remote (fallback)
+#   4. Any tag in the repo (last resort)
+# Environment override GRBL_PREV_TAG skips all auto-detection.
+find_prev_tag() {
+    if [ -n "${GRBL_PREV_TAG:-}" ]; then
+        echo "$GRBL_PREV_TAG"
+        return
+    fi
+    local tag
+    tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
+    if [ -n "$tag" ]; then echo "$tag"; return; fi
+    tag="$(git describe --tags --abbrev=0 master 2>/dev/null || true)"
+    if [ -n "$tag" ]; then echo "$tag"; return; fi
+    tag="$(git describe --tags --abbrev=0 origin/master 2>/dev/null || true)"
+    if [ -n "$tag" ]; then echo "$tag"; return; fi
+    tag="$(git tag --list 'v*' --sort=-version:refname | head -1 2>/dev/null || true)"
+    echo "$tag"
+}
+PREV_TAG="$(find_prev_tag)"
+[ -z "$PREV_TAG" ] && echo "[post-commit] Could not determine previous tag, skipping" && exit 0
+
+# Check if this is a merge commit (has 2+ parents)
+PARENT_COUNT="$(git cat-file -p HEAD 2>/dev/null | grep -c '^parent ' || true)"
+IS_MERGE=false
+[ "$PARENT_COUNT" -ge 2 ] && IS_MERGE=true
+
+# Check if a new tag was created at HEAD
 CURRENT_TAGS="$(git tag --points-at HEAD 2>/dev/null || true)"
 PREVIOUS_TAGS="$(git tag --points-at HEAD~1 2>/dev/null || true)"
-
-# Find new tags (present at HEAD but not at HEAD~1)
 NEW_TAGS=""
 for tag in $CURRENT_TAGS; do
     if ! echo "$PREVIOUS_TAGS" | grep -qxF "$tag"; then
@@ -26,23 +61,61 @@ for tag in $CURRENT_TAGS; do
     fi
 done
 
-[ -z "$NEW_TAGS" ] && exit 0
+# Exit early if there's nothing to do: not a merge, not a new tag
+[ "$IS_MERGE" = false ] && [ -z "$NEW_TAGS" ] && exit 0
 
-echo "[post-commit] New tag(s) detected on master:$NEW_TAGS"
+# Determine tag/version for the changelog entry
+if [ -n "$NEW_TAGS" ]; then
+    # Use the first new tag
+    TAG_NAME="$(echo "$NEW_TAGS" | awk '{print $1}')"
+    echo "[post-commit] New tag detected: $TAG_NAME"
+else
+    # No new tag — this is a merge on master. Use a placeholder.
+    TAG_NAME="HEAD"
+    echo "[post-commit] Merge on $BRANCH detected"
+fi
 
-for tag in $NEW_TAGS; do
-    PREV_TAG="$(git describe --tags --abbrev=0 "$tag"~1 2>/dev/null || true)"
-    if [ -z "$PREV_TAG" ]; then
-        echo "[post-commit] No previous tag found, skipping changelog for $tag"
-        continue
+echo "[post-commit] Generating changelog entries (since $PREV_TAG)..."
+
+ENTRIES="$(bash scripts/generate-changelog.sh --stdout "$PREV_TAG" HEAD 2>/dev/null || true)"
+
+if [ -z "$ENTRIES" ]; then
+    echo "[post-commit] No entries generated, skipping"
+    exit 0
+fi
+
+# On dev: just show a preview
+if [ "$BRANCH" = "dev" ]; then
+    echo ""
+    echo "============================================"
+    echo "[post-commit] CHANGELOG preview (dev branch)"
+    echo "============================================"
+    echo "$ENTRIES"
+    echo "============================================"
+    echo "[post-commit] To apply: run 'bash scripts/generate-changelog.sh $PREV_TAG <new-tag>' on master"
+    exit 0
+fi
+
+# On master: append changelog and amend
+{
+    echo ""
+    echo "$ENTRIES"
+} >> CHANGELOG.md
+
+git add CHANGELOG.md
+
+if [ -n "$NEW_TAGS" ]; then
+    # Tag was created — amend the tag's commit
+    if git commit --amend --no-edit --no-verify 2>/dev/null; then
+        echo "[post-commit] CHANGELOG.md updated and commit amended for tag $TAG_NAME"
+    else
+        echo "[post-commit] Warning: could not amend commit for tag $TAG_NAME"
     fi
-
-    echo "[post-commit] Generating changelog entries for $tag (since $PREV_TAG)..."
-    cd "$(git rev-parse --show-toplevel)"
-    bash scripts/generate-changelog.sh "$PREV_TAG" "$tag"
-
-    # Stage the updated changelog
-    git add CHANGELOG.md
-    git commit --amend --no-edit --no-verify 2>/dev/null || \
-        echo "[post-commit] Warning: could not amend commit with CHANGELOG.md update"
-done
+elif [ "$IS_MERGE" = true ]; then
+    # Merge commit — amend it
+    if git commit --amend --no-edit --no-verify 2>/dev/null; then
+        echo "[post-commit] CHANGELOG.md updated and merge commit amended"
+    else
+        echo "[post-commit] Warning: could not amend merge commit"
+    fi
+fi
