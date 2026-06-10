@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# post-commit — auto-update CHANGELOG.md on merge/tag
+# post-commit — generate changelog entries for new commits on any branch
 #
-# Behaviour per branch:
-#   master + new tag  → generate entries, amend commit
-#   master + merge    → generate entries, amend merge commit
-#   dev               → generate entries (preview only, no amend)
-#   other             → skip
+# This hook runs after every local commit.  It generates a changelog
+# preview for any new commits since the last release tag.
+#
+# On protected branches (master/dev) it only shows a preview.
+# On feature branches it also updates CHANGELOG.md so the change
+# can be included in the next PR.
 #
 # Install:
 #   git config core.hooksPath .githooks
@@ -13,109 +14,58 @@
 
 set -euo pipefail
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-case "$BRANCH" in
-    master|dev) ;;
-    *) exit 0 ;;
-esac
-
 cd "$(git rev-parse --show-toplevel)"
 
-# Find previous release tag (latest tag reachable from this commit's ancestry).
-# Try several strategies in order of preference:
-#   1. HEAD~1 (the immediate parent)
-#   2. `master` branch tip (useful on `dev` when no tag is in dev's history)
-#   3. `origin/master` remote (fallback)
-#   4. Any tag in the repo (last resort)
-# Environment override GRBL_PREV_TAG skips all auto-detection.
+# Find previous release tag
 find_prev_tag() {
-    if [ -n "${GRBL_PREV_TAG:-}" ]; then
-        echo "$GRBL_PREV_TAG"
-        return
-    fi
     local tag
     tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
-    if [ -n "$tag" ]; then echo "$tag"; return; fi
+    [ -n "$tag" ] && echo "$tag" && return
     tag="$(git describe --tags --abbrev=0 master 2>/dev/null || true)"
-    if [ -n "$tag" ]; then echo "$tag"; return; fi
+    [ -n "$tag" ] && echo "$tag" && return
     tag="$(git describe --tags --abbrev=0 origin/master 2>/dev/null || true)"
-    if [ -n "$tag" ]; then echo "$tag"; return; fi
-    tag="$(git tag --list 'v*' --sort=-version:refname | head -1 2>/dev/null || true)"
-    echo "$tag"
+    [ -n "$tag" ] && echo "$tag" && return
+    git tag --list 'v*' --sort=-version:refname | head -1 2>/dev/null || true
 }
+
 PREV_TAG="$(find_prev_tag)"
-[ -z "$PREV_TAG" ] && echo "[post-commit] Could not determine previous tag, skipping" && exit 0
+[ -z "$PREV_TAG" ] && exit 0
 
-# Check if this is a merge commit (has 2+ parents)
-PARENT_COUNT="$(git cat-file -p HEAD 2>/dev/null | grep -c '^parent ' || true)"
-IS_MERGE=false
-[ "$PARENT_COUNT" -ge 2 ] && IS_MERGE=true
-
-# Check if a new tag was created at HEAD
-CURRENT_TAGS="$(git tag --points-at HEAD 2>/dev/null || true)"
-PREVIOUS_TAGS="$(git tag --points-at HEAD~1 2>/dev/null || true)"
-NEW_TAGS=""
-for tag in $CURRENT_TAGS; do
-    if ! echo "$PREVIOUS_TAGS" | grep -qxF "$tag"; then
-        NEW_TAGS="$NEW_TAGS $tag"
-    fi
-done
-
-# Exit early if there's nothing to do: not a merge, not a new tag
-[ "$IS_MERGE" = false ] && [ -z "$NEW_TAGS" ] && exit 0
-
-# Determine tag/version for the changelog entry
-if [ -n "$NEW_TAGS" ]; then
-    # Use the first new tag
-    TAG_NAME="$(echo "$NEW_TAGS" | awk '{print $1}')"
-    echo "[post-commit] New tag detected: $TAG_NAME"
-else
-    # No new tag — this is a merge on master. Use a placeholder.
-    TAG_NAME="HEAD"
-    echo "[post-commit] Merge on $BRANCH detected"
-fi
-
-echo "[post-commit] Generating changelog entries (since $PREV_TAG)..."
+# Check if there are new commits since the tag
+COUNT="$(git rev-list "$PREV_TAG..HEAD" --count 2>/dev/null || echo 0)"
+[ "$COUNT" -eq 0 ] && exit 0
 
 ENTRIES="$(bash scripts/generate-changelog.sh --stdout "$PREV_TAG" HEAD 2>/dev/null || true)"
+[ -z "$ENTRIES" ] && exit 0
 
-if [ -z "$ENTRIES" ]; then
-    echo "[post-commit] No entries generated, skipping"
-    exit 0
-fi
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
 
-# On dev: just show a preview
-if [ "$BRANCH" = "dev" ]; then
-    echo ""
-    echo "============================================"
-    echo "[post-commit] CHANGELOG preview (dev branch)"
-    echo "============================================"
-    echo "$ENTRIES"
-    echo "============================================"
-    echo "[post-commit] To apply: run 'bash scripts/generate-changelog.sh $PREV_TAG <new-tag>' on master"
-    exit 0
-fi
+echo ""
+echo "============================================"
+echo "[post-commit] $COUNT new commit(s) since $PREV_TAG on '$BRANCH'"
+echo "============================================"
+echo "$ENTRIES"
+echo "============================================"
 
-# On master: append changelog and amend
-{
-    echo ""
-    echo "$ENTRIES"
-} >> CHANGELOG.md
-
-git add CHANGELOG.md
-
-if [ -n "$NEW_TAGS" ]; then
-    # Tag was created — amend the tag's commit
-    if git commit --amend --no-edit --no-verify 2>/dev/null; then
-        echo "[post-commit] CHANGELOG.md updated and commit amended for tag $TAG_NAME"
-    else
-        echo "[post-commit] Warning: could not amend commit for tag $TAG_NAME"
-    fi
-elif [ "$IS_MERGE" = true ]; then
-    # Merge commit — amend it
-    if git commit --amend --no-edit --no-verify 2>/dev/null; then
-        echo "[post-commit] CHANGELOG.md updated and merge commit amended"
-    else
-        echo "[post-commit] Warning: could not amend merge commit"
-    fi
-fi
+case "$BRANCH" in
+    master|dev)
+        echo "[post-commit] Branch '$BRANCH' is protected — no files modified."
+        echo "[post-commit] To apply: run 'bash scripts/generate-changelog.sh $PREV_TAG <new-tag>'"
+        ;;
+    *)
+        # On feature branches: update CHANGELOG.md if not already present
+        ENTRY_KEY="$(echo "$ENTRIES" | head -1 | sed 's/^## \[//;s/\].*//')"
+        if grep -q "^## \[$ENTRY_KEY\]" CHANGELOG.md 2>/dev/null; then
+            echo "[post-commit] Section '[$ENTRY_KEY]' already in CHANGELOG.md, skipping."
+        else
+            {
+                echo ""
+                echo "$ENTRIES"
+            } >> CHANGELOG.md
+            echo "[post-commit] CHANGELOG.md updated."
+        fi
+        echo "[post-commit] Review and commit before pushing:"
+        echo "[post-commit]   git add CHANGELOG.md && git commit -m 'Update CHANGELOG.md'"
+        ;;
+esac
+echo ""
