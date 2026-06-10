@@ -88,7 +88,7 @@ Keep-alive is compiled in by default. To disable:
 
 `CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) format.
 
-### Auto-generate entries for a new release
+### Manual generation
 
 ```bash
 # From repo root:
@@ -98,16 +98,36 @@ bash scripts/generate-changelog.sh v1.0.1 v1.1.0
 This appends formatted entries to `CHANGELOG.md` based on commit messages.
 Always review and edit the result before committing.
 
-### Automatic generation on tag creation
+### Automatic generation (git hooks)
 
-A `post-commit` hook in `.githooks/` detects when a new tag is created on the
-`master` branch and auto-runs `generate-changelog.sh`. To enable:
+Two hooks in `.githooks/` auto-generate changelog entries:
 
+| Hook | Trigger | Behaviour |
+|---|---|---|
+| `post-commit` | Local `git commit` | Updates CHANGELOG.md on feature branches; preview-only on master/dev |
+| `post-merge` | `git pull` or `git merge` | Updates CHANGELOG.md locally (does not amend — branches may be protected) |
+
+Since **`master` and `dev` are protected** (PR-only merges), the hooks:
+- Run **locally** on your machine when you pull the merged PR (`git pull` triggers `post-merge`)
+- Update `CHANGELOG.md` in the working tree without committing
+- On protected branches, instruct you to create a new PR with the changelog change
+- On feature branches, you can `git add && git commit` the changelog directly
+
+**Enable hooks:**
 ```bash
 git config core.hooksPath .githooks
+chmod +x .githooks/post-commit .githooks/post-merge
 ```
 
-The hook will amend the last commit with the updated `CHANGELOG.md`.
+**Workflow example after a PR merge:**
+```bash
+git checkout dev && git pull
+# post-merge fires → CHANGELOG.md updated locally
+git checkout -b update-changelog
+git add CHANGELOG.md && git commit -m "Update CHANGELOG.md"
+git push origin update-changelog
+# create PR → dev
+```
 
 ## Minimum Hardware Setup
 

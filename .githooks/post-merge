@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# post-merge — update CHANGELOG.md after syncing a PR merge via git pull
+#
+# This hook runs after "git pull" or "git merge".  It detects if new
+# commits have arrived since the last release tag and generates
+# changelog entries.
+#
+# On protected branches (master/dev) it updates CHANGELOG.md in the
+# working tree so the change can be included in the next PR.
+# On other branches it also updates CHANGELOG.md.
+#
+# It NEVER tries to commit or amend (branches may be protected).
+#
+# Install:
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/post-merge
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+# Find previous release tag
+find_prev_tag() {
+    local tag
+    tag="$(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || true)"
+    [ -n "$tag" ] && echo "$tag" && return
+    tag="$(git describe --tags --abbrev=0 master 2>/dev/null || true)"
+    [ -n "$tag" ] && echo "$tag" && return
+    tag="$(git describe --tags --abbrev=0 origin/master 2>/dev/null || true)"
+    [ -n "$tag" ] && echo "$tag" && return
+    git tag --list 'v*' --sort=-version:refname | head -1 2>/dev/null || true
+}
+
+PREV_TAG="$(find_prev_tag)"
+[ -z "$PREV_TAG" ] && exit 0
+
+# Check if there are new commits since the tag
+COUNT="$(git rev-list "$PREV_TAG..HEAD" --count 2>/dev/null || echo 0)"
+[ "$COUNT" -eq 0 ] && exit 0
+
+ENTRIES="$(bash scripts/generate-changelog.sh --stdout "$PREV_TAG" HEAD 2>/dev/null || true)"
+[ -z "$ENTRIES" ] && exit 0
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+
+echo ""
+echo "============================================"
+echo "[post-merge] $COUNT new commit(s) since $PREV_TAG pulled on '$BRANCH'"
+echo "============================================"
+echo "$ENTRIES"
+echo "============================================"
+
+# Check if this version section already exists in CHANGELOG.md
+ENTRY_KEY="$(echo "$ENTRIES" | head -1 | sed 's/^## \[//;s/\].*//')"
+if grep -q "^## \[$ENTRY_KEY\]" CHANGELOG.md 2>/dev/null; then
+    echo "[post-merge] Section '[$ENTRY_KEY]' already in CHANGELOG.md, skipping."
+else
+    {
+        echo ""
+        echo "$ENTRIES"
+    } >> CHANGELOG.md
+    echo "[post-merge] CHANGELOG.md updated with $COUNT new commits."
+fi
+
+case "$BRANCH" in
+    master|dev)
+        echo "[post-merge] CHANGELOG.md updated locally."
+        echo "[post-merge] Since '$BRANCH' is protected, create a PR with this change:"
+        echo "[post-merge]   git checkout -b update-changelog"
+        echo "[post-merge]   git add CHANGELOG.md && git commit -m 'Update CHANGELOG.md for \$PREV_TAG..\$BRANCH'"
+        echo "[post-merge]   git push origin update-changelog"
+        echo "[post-merge]   # then create PR → $BRANCH"
+        ;;
+    *)
+        echo "[post-merge] CHANGELOG.md updated. Review and commit:"
+        echo "[post-merge]   git add CHANGELOG.md && git commit -m 'Update CHANGELOG.md'"
+        echo "[post-merge]   git push"
+        ;;
+esac
+echo ""
