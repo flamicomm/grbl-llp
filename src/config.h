@@ -688,11 +688,20 @@
    parser resets. Default is 2000ms.
    #define LLP_FRAME_TIMEOUT_MS 2000
 
+   LLP_ENABLE_STATS defines whether parser-level statistics are tracked. Disabled
+   by default in v3.1.0 to save 12 bytes of RAM per parser instance. grbl-llp uses
+   its own transport-level counters instead.
+   #define LLP_ENABLE_STATS 0
+
    TX_BUFFER_SIZE must be large enough to hold a complete LLP frame for the longest
    response. The default of 160 should be sufficient for most status reports.
    NOTE: This is already defined in serial.h but can be overridden here.
    #define TX_BUFFER_SIZE 160
 */
+
+// LLP transport overrides (must be defined before llp_protocol.h is included)
+#define LLP_MAX_PAYLOAD 64
+#define LLP_ENABLE_STATS 0
 
 // Paste CPU_MAP definitions here.
 

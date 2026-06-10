@@ -34,6 +34,14 @@ static volatile uint16_t llp_rx_dropped_count = 0;
 static volatile uint16_t llp_tx_dropped_count = 0;
 static volatile uint16_t llp_rx_raw_bytes = 0;
 
+// Static buffers for LLP frame construction (avoid large stack allocations that
+// risk overflowing into BSS on RAM-constrained ATmega328P).
+// llp_rx_byte() runs in ISR context; llp_transport_tx_flush() in main context.
+// Note: RX uses llp_get_final_payload_ptr() for zero-copy reads directly from
+// the parser's frame buffer, so no separate RX payload buffer is needed.
+static uint8_t llp_tx_payload_buf[LLP_MAX_PAYLOAD];
+static uint8_t llp_tx_frame_buf[LLP_MAX_FRAME_SIZE(LLP_MAX_PAYLOAD)];
+
 void llp_transport_init(void)
 {
     llp_parser_init(&llp_rx_parser);
@@ -62,7 +70,7 @@ static void llp_rx_buffer_write(uint8_t data)
     }
 }
 
-static void llp_process_payload(uint8_t *payload, uint16_t len)
+static void llp_process_payload(const uint8_t *payload, uint16_t len)
 {
     for (uint16_t i = 0; i < len; i++) {
         uint8_t c = payload[i];
@@ -164,12 +172,11 @@ void llp_transport_rx_byte(uint8_t byte)
     int result = llp_parser_process_byte(&llp_rx_parser, byte, now);
 
     if (result == 1) {
-        uint8_t payload_buf[LLP_MAX_PAYLOAD];
-        int payload_len = llp_get_final_payload(&llp_rx_parser.frame,
-                                                 payload_buf, sizeof(payload_buf));
-        if (payload_len > 0) {
+        uint16_t payload_len;
+        const uint8_t *payload = llp_get_final_payload_ptr(&llp_rx_parser.frame, &payload_len);
+        if (payload != NULL && payload_len > 0) {
             llp_rx_frame_count++;
-            llp_process_payload(payload_buf, (uint16_t)payload_len);
+            llp_process_payload(payload, payload_len);
         }
     } else if (result < 0) {
         llp_rx_error_count++;
@@ -196,14 +203,12 @@ void llp_transport_tx_flush(void)
     if (idx == 0) return;
     llp_tx_line_idx = 0;
 
-    uint8_t payload_buf[LLP_MAX_PAYLOAD];
-    size_t payload_len = llp_build_final_payload(payload_buf, sizeof(payload_buf),
+    size_t payload_len = llp_build_final_payload(llp_tx_payload_buf, sizeof(llp_tx_payload_buf),
                                                    llp_tx_line_buf, (uint16_t)idx);
     if (payload_len == 0) return;
 
-    uint8_t frame_buf[LLP_MAX_FRAME_SIZE(LLP_MAX_PAYLOAD)];
-    size_t frame_len = llp_build_frame(frame_buf, sizeof(frame_buf),
-                                         payload_buf, (uint16_t)payload_len);
+    size_t frame_len = llp_build_frame(llp_tx_frame_buf, sizeof(llp_tx_frame_buf),
+                                         llp_tx_payload_buf, (uint16_t)payload_len);
     if (frame_len == 0) return;
 
     for (size_t i = 0; i < frame_len; i++) {
@@ -218,7 +223,7 @@ void llp_transport_tx_flush(void)
             UCSR0B |= (1 << UDRIE0);
             return;
         }
-        serial_tx_buffer[serial_tx_buffer_head] = frame_buf[i];
+        serial_tx_buffer[serial_tx_buffer_head] = llp_tx_frame_buf[i];
         serial_tx_buffer_head = next_head;
     }
 
