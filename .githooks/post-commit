@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# post-commit — auto-update CHANGELOG.md when a new tag is created on master
+#
+# Detects if HEAD now has a tag that HEAD~1 did not (i.e., a tag was just
+# created for the current commit).  If so, generates changelog entries
+# between the previous tag and the new one.
+#
+# Install with:
+#   git config core.hooksPath .githooks
+#   chmod +x .githooks/post-commit
+
+set -euo pipefail
+
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+[ "$BRANCH" != "master" ] && exit 0
+
+# Get tags at HEAD and HEAD~1
+CURRENT_TAGS="$(git tag --points-at HEAD 2>/dev/null || true)"
+PREVIOUS_TAGS="$(git tag --points-at HEAD~1 2>/dev/null || true)"
+
+# Find new tags (present at HEAD but not at HEAD~1)
+NEW_TAGS=""
+for tag in $CURRENT_TAGS; do
+    if ! echo "$PREVIOUS_TAGS" | grep -qxF "$tag"; then
+        NEW_TAGS="$NEW_TAGS $tag"
+    fi
+done
+
+[ -z "$NEW_TAGS" ] && exit 0
+
+echo "[post-commit] New tag(s) detected on master:$NEW_TAGS"
+
+for tag in $NEW_TAGS; do
+    PREV_TAG="$(git describe --tags --abbrev=0 "$tag"~1 2>/dev/null || true)"
+    if [ -z "$PREV_TAG" ]; then
+        echo "[post-commit] No previous tag found, skipping changelog for $tag"
+        continue
+    fi
+
+    echo "[post-commit] Generating changelog entries for $tag (since $PREV_TAG)..."
+    cd "$(git rev-parse --show-toplevel)"
+    bash scripts/generate-changelog.sh "$PREV_TAG" "$tag"
+
+    # Stage the updated changelog
+    git add CHANGELOG.md
+    git commit --amend --no-edit --no-verify 2>/dev/null || \
+        echo "[post-commit] Warning: could not amend commit with CHANGELOG.md update"
+done

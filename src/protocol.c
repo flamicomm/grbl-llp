@@ -29,8 +29,6 @@
 
 static char line[LINE_BUFFER_SIZE]; // Line to be executed. Zero-terminated.
 
-static unsigned long last_keepalive_ms = 0;
-
 static void protocol_exec_rt_suspend();
 
 
@@ -180,31 +178,6 @@ void protocol_main_loop()
 
     protocol_execute_realtime();  // Runtime command check point.
     if (sys.abort) { return; } // Bail to main() program loop to reset system.
-
-// Keep-alive: send LLP stats every 1 second
-    {
-        unsigned long now = llp_transport_get_ms();
-        if (now - last_keepalive_ms >= 1000) {
-            last_keepalive_ms = now;
-            llp_stats_t st;
-            llp_transport_get_stats(&st);
-            printString("[KA] st:");
-            print_uint8_base10(sys.state);
-            printString(" rx:");
-            printInteger(st.rx_frames);
-            printString(" e:");
-            printInteger(st.rx_errors);
-            printString(" t:");
-            printInteger(st.rx_timeouts);
-            printString(" rd:");
-            printInteger(st.rx_dropped);
-            printString(" td:");
-            printInteger(st.tx_dropped);
-            printString(" rb:");
-            printInteger(st.rx_raw_bytes);
-            printString("\r\n");
-        }
-    }
   }
 
   return; /* Never reached */
