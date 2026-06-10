@@ -79,3 +79,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [1.0.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.1
 [1.0.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.0
 
+
+## [HEAD] - 2026-06-10
+
+### Added
+
+### Changed
+  - changelog automatico corregido
+  - changelog automatico corregido
+
+### Fixed
+
+### Removed
+
+### Other
+  - Se reduce tamaño de buffers y se realizan optimizaciones de memoria RAM. Creado CHANGELOG automatico
+  - Actualizada librería llp a la versión 3.1.0
+  - Actualizado script para simular envío de programa al dispositivo
+  - Se elimina salto de línea que agregaba el firmware en la comunicación
