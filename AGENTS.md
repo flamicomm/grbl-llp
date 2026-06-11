@@ -1,5 +1,8 @@
 # AGENTS.md - grbl-llp
 
+> **⚠️ Regla de oro: Siempre ejecutar `$RST=$` después de flashear.**  
+> EEPROM de Arduinos usados puede contener floats inválidos de Grbl stock/otro fork que lockean el planificador. Ver "Motion Hang Due to Corrupted EEPROM Settings" abajo.
+
 ## Build & Upload
 
 ```bash
@@ -64,15 +67,48 @@ Fields: `buf:N` (planner blocks), `rx:N` (LLP frames), `e:N` (errors), `t:N` (ti
 - TX flush is non-blocking: if TX buffer full, partial frame is discarded and `tx_dropped++` increments
 - LLP stats (`llp_transport_get_stats()`, `llp_transport_reset_stats()`) accessible via `#` command
 
+## Critical Context
+
+- **Current RAM**: 1705/2048 B (83.3%); Flash: 29134/30720 B (94.8%); stack margin ~343 B
+- **ALARM:98 root cause**: Not a standard Grbl alarm code (only 1–10 defined). Most likely RAM corruption from stack overflow in LLP transport layer.
+- **Motion hang root cause**: Corrupted EEPROM settings (see "Motion Hang Due to Corrupted EEPROM Settings" below). `$RST=$` fixes it immediately.
+- **ESP8266 bridge**: Permanent intervening device on `/dev/ttyUSB0`. To upload to the Arduino, the ESP must be in transparent mode (works with `nano` env at 57600 baud). The UNO uses standard 115200 baud for upload.
+- **Protected branches**: `master` and `dev` accept changes only via PR; local git hooks must not attempt commits/amends.
+
 ## Known Issues
 
-### Z-axis Hang (Grbl 1.1h bug, NOT in LLP code)
+### Motion Hang Due to Corrupted EEPROM Settings (Critical)
 
-The original Grbl 1.1h (unmodified) also hangs on Z-axis movement (`G0 Z1`). This is a Grbl core bug, not an LLP issue. Symptoms:
-- MCU completely stops (no keepalive, no serial response) after first Z movement
-- X and Y work indefinitely; only Z_AXIS (index 2) triggers hang
-- Swapping STEP_BIT assignments (Z→D2, X→D4) makes both work — confirms it's software index issue, not pin D4 hardware
-- Workaround: remap Z_STEP to different pin in `cpu_map.h` and rewire CNC shield
+**Symptoms:** MCU freezes completely (no serial response, no keep‑alive) after any `G0`/`G1` motion command — regardless of axis. `$$` shows garbage values like `$11=-2147483.648` (0x80000000 as float), `$110=-2147483.648`, `$121=0.000`, or missing lines (`$101`, `$120`).
+
+**Root cause:** Corrupted EEPROM settings (nan / inf / uninitialised float data) for `max_rate`, `acceleration`, `junction_deviation`, etc. When the planner reads these, it computes invalid step parameters, causing the stepper interrupt or main loop to lock up.
+
+**Discovered:** 2026‑06‑11 — an UNO with seemingly random hangs was fixed entirely by running `$RST=$`. The same board then executed XY and Z moves without issues.
+
+**Fix:**
+```bash
+# Restore all settings to compile‑time defaults:
+echo '$RST=$' | python3 -c "
+import sys; sys.path.insert(0,'scripts')
+import serial, time, llp
+s = serial.Serial('/dev/ttyUSB0', 115200, timeout=3)
+s.setDTR(0); time.sleep(0.1); s.setDTR(1); time.sleep(2)
+s.read_all()  # drain init
+frame = llp.encode(b'\$RST=\$\n')
+s.write(frame); time.sleep(1); s.close()
+"
+```
+After `$RST=$`, the MCU resets automatically. Verify with `$$` — all values should be reasonable. Then reconfigure per‑axis settings (`$100`–`$132`) for your machine.
+
+**Prevention:** Always verify settings with `$$` after flashing a new board. Old EEPROM data from a previous Grbl build or a different unit can contain invalid floats that silently corrupt the planner.
+
+### ~~Z-axis Hang~~ (Rediagnosed: same EEPROM corruption bug)
+
+Previously thought to be a Grbl core pin‑contention bug. Symptoms matched the corrupted EEPROM pattern exactly:
+- MCU stops after first Z movement (or ANY axis — Z was just the first tested)
+- `$$` showed garbage values identical to the corrupted settings bug
+
+**2026‑06‑11 resolution:** After `$RST=$` cleared the EEPROM garbage, Z‑axis motion (`G0 Z2 F200`) worked perfectly — even on a bare UNO with no CNC shield, where this was previously reported as "unfixable." The supposed "Z‑axis bug" was the same corrupted EEPROM issue all along. Retest if a board exhibits this symptom — `$RST=$` before any other debugging.
 
 ### Keep-Alive in Alarm Loop
 

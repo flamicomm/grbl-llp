@@ -80,20 +80,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 [1.0.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.0
 
 
-## [HEAD] - 2026-06-10
+## [HEAD] - 2026-06-11
 
 ### Added
+- Documented EEPROM corruption bug in AGENTS.md — corrupted `max_rate`, `acceleration`, or `junction_deviation` float values cause the planner to lock up on any motion command
 
 ### Changed
-  - changelog automatico corregido
-  - changelog automatico corregido
+- Updated AGENTS.md: "Z-axis hang" rediagnosed as corrupted EEPROM settings bug; `$RST=$` is the definitive fix
+- Updated README.md: documented mandatory `$RST=$` after flashing new or used hardware
+- Se reduce tamaño de buffers y se realizan optimizaciones de memoria RAM. Creado CHANGELOG automatico
+- Actualizada librería llp a la versión 3.1.0
+- Actualizado script para simular envío de programa al dispositivo
+- Se elimina salto de línea que agregaba el firmware en la comunicación
 
 ### Fixed
-
-### Removed
-
-### Other
-  - Se reduce tamaño de buffers y se realizan optimizaciones de memoria RAM. Creado CHANGELOG automatico
-  - Actualizada librería llp a la versión 3.1.0
-  - Actualizado script para simular envío de programa al dispositivo
-  - Se elimina salto de línea que agregaba el firmware en la comunicación
+- **Critical: Motion hang on any axis** — previously misattributed to a Z‑axis pin bug. Root cause was EEPROM garbage (0x80000000 floats) from previous Grbl builds. Fixed by running `$RST=$` once after flashing.

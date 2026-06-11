@@ -152,20 +152,35 @@ python3 scripts/stream_gcode.py test_large.gcode --port /dev/ttyUSB0
 - **RAM**: 81.3% (1666/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
 
+## Importante: Reseteo de EEPROM al flashear
+
+**Siempre ejecutar `$RST=$` después de flashear este firmware en un Arduino nuevo o usado.** Los datos previos en EEPROM (de Grbl stock, otro fork, o un board diferente) pueden contener floats inválidos que lockean el planificador al primer movimiento.
+
+**Síntomas de EEPROM corrupta:**
+- MCU se congela al ejecutar cualquier `G0`/`G1` (sin importar el eje)
+- `$$` muestra valores imposibles como `-2147483.648` o `0.000` en max_rate/acceleration
+- Faltan líneas en `$$` (ej: `$101`, `$120` ausentes)
+
+**Solución:**
+```bash
+echo '$RST=$' | python3 -c "
+import sys; sys.path.insert(0,'scripts')
+import serial, time, llp
+s = serial.Serial('/dev/ttyUSB0', 115200, timeout=3)
+s.setDTR(0); time.sleep(0.1); s.setDTR(1); time.sleep(2)
+s.read_all()
+frame = llp.encode(b'\$RST=\$\n')
+s.write(frame); time.sleep(1); s.close()
+"
+```
+
+Después verificar con `$$` y reconfigurar `$100`–`$132` para tu máquina.
+
 ## Issues conocidos
 
-### Arduino Uno con cuelgue en Z
+### Cuelgue en movimiento tras flashear
 
-Algunos Arduino Uno (o sus shields) presentan un **defecto de hardware** que hace que el MCU se congele al ejecutar pasos en Z_AXIS. Este problema **NO está en el firmware** — el mismo firmware funciona correctamente en Arduino Nano idéntico.
-
-**Workarounds:**
-1. Usar Arduino Nano (probado y funcional)
-2. Usar rama `custom` con Z_STEP remapeado a A4
-3. No usar Z (solo X/Y para PCB ya nivelada)
-
-### G2/G3 (arcos) en ciertos Arduinos
-
-En hardware defectuoso, los arcos complejos también pueden causar cuelgue. El streaming script detecta esto y reporta la línea exacta.
+El cuelgue al primer movimiento (antes reportado como "Z-axis bug" o "G2/G3 bug") fue rediagnosticado como **corrupción de EEPROM**. Ver sección "Reseteo de EEPROM" arriba. Si el board se cuelga después de `$RST=$`, puede haber un problema de hardware real.
 
 ## Librería cliente
 
