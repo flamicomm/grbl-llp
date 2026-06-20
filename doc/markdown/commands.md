@@ -111,6 +111,8 @@ All error responses follow the format `error:N\r\n` where `N` is the numeric sta
 | **`$X` unlock** | `[MSG:Caution: Unlocked]\r\n` | `system.c:164` |
 | **`$RST=*` wipe** | `[MSG:Restoring defaults]\r\n` (followed by reset) | `system.c:234` |
 | **Safety door ajar while running** | `[MSG:Check Door]\r\n` | `protocol.c:317` |
+| **Probe success (G38.x)** | `[PRB:x.xxx,y.yyy,z.zzz:1]\r\n` — auto-reported after each successful G38.2/3/4/5 probe | `motion_control.c:311-314` |
+| **Probe failure (G38.x)** | `[PRB:x.xxx,y.yyy,z.zzz:0]\r\n` — auto-reported when probe did not trigger | `motion_control.c:311-314` |
 
 ---
 
@@ -202,6 +204,63 @@ Runs the homing cycle. Single-axis homing also available: `$HX`, `$HY`, `$HZ` (r
 - `$RST=#` — Clear all G-code parameters (G54–G59, G28, G30, etc.).
 - `$RST=*` — Wipe all EEPROM data used by Grbl (settings, parameters, startup lines, build info).
 All three trigger an automatic reset after execution.
+
+---
+
+## G38.x Probing Commands (Auto-Leveling)
+
+Grbl-LLP supports G38.x probing via the probe pin on **A5** (Analog Pin 5). These commands move an axis until the probe pin is triggered, then stop and record the contact position.
+
+| Command | Behavior on trigger | Behavior on no trigger |
+|---|---|---|
+| **G38.2** | Stops, records position, returns success | ALARM, stops |
+| **G38.3** | Stops, records position, returns success | Returns error, stops |
+| **G38.4** (away) | Stops, records position, returns success | ALARM, stops |
+| **G38.5** (away) | Stops, records position, returns success | Returns error, stops |
+
+### Auto-Report After Probe
+
+When `MESSAGE_PROBE_COORDINATES` is enabled (default in grbl-llp), the firmware **automatically** sends the probe contact position after every G38.x cycle:
+
+```
+G38.2 Z-1 F30       ← sent by host
+ok\r\n              ← G-code accepted and executed
+[PRB:45.678,12.345,-0.085:1]\r\n  ← auto-reported by firmware
+```
+
+The `:1` flag means the probe was triggered (success). `:0` means the probe did not trigger (failure).
+
+The host does NOT need to poll with `?` to obtain the probe position.
+
+### Suggested Probing Workflow for PCB Leveling
+
+```
+G0 X10 Y10 Z2         ← position above probe point
+G38.2 Z-1 F30         ← probe down until contact
+[PRB:45.678,12.345,-0.085:1]  ← position received automatically
+G0 Z2                 ← retract
+
+G0 X20 Y10 Z2         ← next point
+G38.2 Z-1 F30         ← probe again
+[PRB:45.678,12.345,-0.080:1]  ← position received automatically
+G0 Z2                 ← retract
+...                   ← repeat for grid
+```
+
+### Probe Pin Wiring
+
+```
+Arduino A5   ←── alligator clip → tool bit (V-bit)
+Arduino GND  ←── alligator clip → PCB copper (GND)
+```
+
+Pull-up internal active by default. $6=0 is correct. When the bit touches copper, A5 goes LOW → probe triggers.
+
+### See Also
+
+- `config.h`: `MESSAGE_PROBE_COORDINATES` (line 164), `ALLOW_FEED_OVERRIDE_DURING_PROBE_CYCLES` (line 544)
+- `src/probe.c`: `probe_state_monitor()` runs in stepper ISR for microsecond-accurate trigger detection
+- `$#` command: includes `[PRB:...]` line with last probe result
 
 ---
 

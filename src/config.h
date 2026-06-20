@@ -161,7 +161,7 @@
 // Upon a successful probe cycle, this option provides immediately feedback of the probe coordinates
 // through an automatically generated message. If disabled, users can still access the last probe
 // coordinates through Grbl '$#' print parameters.
-// #define MESSAGE_PROBE_COORDINATES // Disabled for minimal CNC (no probe).
+#define MESSAGE_PROBE_COORDINATES // Auto-report probe position after G38.x
 
 // Enables a second coolant control pin via the mist coolant g-code command M7 on the Arduino Uno
 // analog pin 4. Only use this option if you require a second coolant control pin.
