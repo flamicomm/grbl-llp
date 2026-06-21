@@ -13,7 +13,7 @@ pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
 
 ## Flash Constraints
 
-- Flash: **90.3%** used (29112/32256 bytes)
+- Flash: **90.8%** used (29298/32256 bytes for UNO; 94.8% nano)
 - RAM: **83.3%** used (1705/2048 bytes; stack margin ~343 B)
 - **Never use `-O0`** — flash overflows. Test changes with `-O0` only temporarily, then revert.
 - Adding debug features may require removing other code to fit.
@@ -32,11 +32,11 @@ pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
 | `serial.c`, `serial.h` | `volatile` on `serial_rx_buffer_head` and `serial_tx_buffer_head` (shared ISR/main) |
 | `llp_transport.c` | Timer2 used for ms counter; non-blocking TX flush (discards on overflow) |
 | `protocol.c` | Keep-alive removed from main loop (2006-06-10); `[KA] ALARM` in critical alarm loop preserved; `#` command with LLP stats |
-| `config.h` | `MESSAGE_PROBE_COORDINATES`, `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` disabled |
+| `config.h` | `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` disabled; `MESSAGE_PROBE_COORDINATES` **enabled** (auto-report after G38.x) |
 | `spindle_control.c` | Stubs only — no spindle I/O (manual 12V spindle) |
 | `coolant_control.c` | Stubs only — no coolant I/O |
 | `gcode.c` | TLO (G43.1/G49) removed; G18/G19 mapped to G17; spindle/coolant execution no-ops |
-| `report.c` | Spindle/coolant removed from `$G` report; probe parameters stubbed; RPM settings removed |
+| `report.c` | Spindle/coolant removed from `$G` report; RPM settings removed; `report_probe_parameters()` re-enabled with auto-report after G38.x |
 
 ## Buffer Sizes (RAM Optimization)
 
