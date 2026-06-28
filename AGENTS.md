@@ -128,7 +128,7 @@ Keep-alive is compiled in by default. To disable:
 
 ```bash
 # From repo root:
-bash scripts/generate-changelog.sh v1.0.1 v1.1.1
+bash scripts/generate-changelog.sh v1.0.1 v1.2.0
 ```
 
 This appends formatted entries to `CHANGELOG.md` based on commit messages.

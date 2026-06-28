@@ -75,13 +75,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Pin A4 used for Z-axis movement (workaround for original D4 pin conflict causing MCU hang)
 
-[1.1.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.1.1
+[1.2.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.2.0
 [1.1.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.1.0
 [1.0.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.1
 [1.0.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.0
 
 
-## [1.1.1] - 2026-06-28
+## [1.2.0] - 2026-06-28
 
 ### Added
 - **Probe auto-report after G38.x**: Enabled `MESSAGE_PROBE_COORDINATES` in config.h; implemented `report_probe_parameters()` in report.c using original Grbl 1.1h code. Firmware now auto-sends `[PRB:x,y,z:s]\r\n` after each probe cycle — no `?` polling needed.
