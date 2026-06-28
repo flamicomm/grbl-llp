@@ -75,23 +75,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Pin A4 used for Z-axis movement (workaround for original D4 pin conflict causing MCU hang)
 
+[1.1.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.1.1
 [1.1.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.1.0
 [1.0.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.1
 [1.0.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.0
 
 
-## [HEAD] - 2026-06-11
+## [1.1.1] - 2026-06-28
 
 ### Added
-- Documented EEPROM corruption bug in AGENTS.md — corrupted `max_rate`, `acceleration`, or `junction_deviation` float values cause the planner to lock up on any motion command
+- **Probe auto-report after G38.x**: Enabled `MESSAGE_PROBE_COORDINATES` in config.h; implemented `report_probe_parameters()` in report.c using original Grbl 1.1h code. Firmware now auto-sends `[PRB:x,y,z:s]\r\n` after each probe cycle — no `?` polling needed.
+- **MCUSR reset cause logging**: Added `last_mcusr` global, read MCUSR at startup, and auto-report `[MSG:RST:BOR|EXT|WDR|POR|SFR]\r\n` after every welcome message to diagnose random resets during milling.
+- Documented EEPROM corruption bug in AGENTS.md — corrupted `max_rate`, `acceleration`, or `junction_deviation` float values cause planner lockup on any motion command
 
 ### Changed
-- Updated AGENTS.md: "Z-axis hang" rediagnosed as corrupted EEPROM settings bug; `$RST=$` is the definitive fix
-- Updated README.md: documented mandatory `$RST=$` after flashing new or used hardware
-- Se reduce tamaño de buffers y se realizan optimizaciones de memoria RAM. Creado CHANGELOG automatico
-- Actualizada librería llp a la versión 3.1.0
-- Actualizado script para simular envío de programa al dispositivo
-- Se elimina salto de línea que agregaba el firmware en la comunicación
+- Updated AGENTS.md: "Z-axis hang" rediagnosed as corrupted EEPROM settings bug; flash/RAM values updated; probe auto-report and reset-cause logging documented
+- Updated README.md: documented mandatory `$RST=$` after flashing; updated flash/RAM/keep-alive/LLP version to match current code
+- Updated doc/markdown/commands.md: added G38.x probing section and `[MSG:RST:...]` message
 
 ### Fixed
 - **Critical: Motion hang on any axis** — previously misattributed to a Z‑axis pin bug. Root cause was EEPROM garbage (0x80000000 floats) from previous Grbl builds. Fixed by running `$RST=$` once after flashing.

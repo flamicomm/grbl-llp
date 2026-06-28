@@ -13,8 +13,8 @@ pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
 
 ## Flash Constraints
 
-- Flash: **90.8%** used (29298/32256 bytes for UNO; 94.8% nano)
-- RAM: **83.3%** used (1705/2048 bytes; stack margin ~343 B)
+- Flash: **91.1%** used (29394/32256 bytes for UNO; 95.7% Nano)
+- RAM: **83.3%** used (1706/2048 bytes; stack margin ~342 B)
 - **Never use `-O0`** — flash overflows. Test changes with `-O0` only temporarily, then revert.
 - Adding debug features may require removing other code to fit.
 
@@ -62,14 +62,14 @@ Fields: `buf:N` (planner blocks), `rx:N` (LLP frames), `e:N` (errors), `t:N` (ti
 ## LLP Protocol
 
 - Frame: `[0xAA][0x55][LEN][PAYLOAD...][CRC]`
-- CRC-8 per frame
+- CRC16-CCITT per frame
 - Inter-byte timeout: 2000ms → parser resets
 - TX flush is non-blocking: if TX buffer full, partial frame is discarded and `tx_dropped++` increments
 - LLP stats (`llp_transport_get_stats()`, `llp_transport_reset_stats()`) accessible via `#` command
 
 ## Critical Context
 
-- **Current RAM**: 1705/2048 B (83.3%); Flash: 29134/30720 B (94.8%); stack margin ~343 B
+- **Current RAM**: 1706/2048 B (83.3%); Flash: 29394/32256 B (91.1% UNO) / 29394/30720 B (95.7% Nano); stack margin ~342 B
 - **ALARM:98 root cause**: Not a standard Grbl alarm code (only 1–10 defined). Most likely RAM corruption from stack overflow in LLP transport layer.
 - **Motion hang root cause**: Corrupted EEPROM settings (see "Motion Hang Due to Corrupted EEPROM Settings" below). `$RST=$` fixes it immediately.
 - **ESP8266 bridge**: Permanent intervening device on `/dev/ttyUSB0`. To upload to the Arduino, the ESP must be in transparent mode (works with `nano` env at 57600 baud). The UNO uses standard 115200 baud for upload.
@@ -128,7 +128,7 @@ Keep-alive is compiled in by default. To disable:
 
 ```bash
 # From repo root:
-bash scripts/generate-changelog.sh v1.0.1 v1.1.0
+bash scripts/generate-changelog.sh v1.0.1 v1.1.1
 ```
 
 This appends formatted entries to `CHANGELOG.md` based on commit messages.
