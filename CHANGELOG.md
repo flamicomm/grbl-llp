@@ -95,3 +95,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 - **Critical: Motion hang on any axis** — previously misattributed to a Z‑axis pin bug. Root cause was EEPROM garbage (0x80000000 floats) from previous Grbl builds. Fixed by running `$RST=$` once after flashing.
+
+## [HEAD] - 2026-06-28
+
+### Added
+
+### Changed
+  - changelog automatico corregido
+
+### Fixed
+
+### Removed
+
+### Other
+  - Agregado mensaje de reset al inicio para saber razon por la que mcu se reinicio
+  - Añadido PROBE para autonivelado
+  - Documentado fix importante sobre cuelgues del MCU al mover eje Z
+  - Reestructuración de docs/commands.md con información ampliada sobre comandos grbl y sus respuestas
+  - Actualizado CHANGELOG
