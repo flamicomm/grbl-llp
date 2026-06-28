@@ -226,11 +226,17 @@ void report_grbl_settings() {
 }
 
 
-// Prints current probe parameters. Removed for PCB milling to save flash.
-// Probe functionality is kept; only the reporting is removed.
+// Prints current probe parameters.
 void report_probe_parameters()
 {
-  // Stub: probe report removed for PCB milling.
+  // Report in terms of machine position.
+  printPgmString(PSTR("[PRB:"));
+  float print_position[N_AXIS];
+  system_convert_array_steps_to_mpos(print_position,sys_probe_position);
+  report_util_axis_values(print_position);
+  serial_write(':');
+  print_uint8_base10(sys.probe_succeeded);
+  report_util_feedback_line_feed();
 }
 
 

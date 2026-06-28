@@ -15,7 +15,7 @@ La comunicación serial entre Arduino y PC via USB/UART es **inestable**. Se pro
 
 ## La Solución: Protocolo LLP v3
 
-LLP (Layered Link Protocol) es un protocolo binario de transporte que garantiza integridad de datos sobre UART:
+LLP (Layered Link Protocol) v3.1.0 es un protocolo binario de transporte que garantiza integridad de datos sobre UART:
 
 - **Tramas binarias con CRC16-CCITT**: Checksum por frame (no por byte)
 - **Bytes de sincronización**: Secuencia `0xAA 0x55` para resync
@@ -23,8 +23,9 @@ LLP (Layered Link Protocol) es un protocolo binario de transporte que garantiza 
 - **Byte stuffing**: `0xAA` en payload se escapa como `0xAA 0x00`
 - **Timeout inter-byte**: 2000ms sin datos → parser resetea
 - **Layer chain**: Payload `0x00` indica FinalNode (datos raw)
+- **Zero-copy RX**: `llp_get_final_payload_ptr()` lee directo del buffer del parser
 
-### Formato de trama LLP v3
+### Formato de trama LLP v3.1.0
 
 ```
 [0xAA][0x55][LEN_L][LEN_H][PAYLOAD...][CRC_L][CRC_H]
@@ -32,7 +33,7 @@ LLP (Layered Link Protocol) es un protocolo binario de transporte que garantiza 
 
 ### Keep-alive
 
-El firmware envía `[KA] st:X rx:N e:N t:N rd:N td:N rb:N` cada 1 segundo mientras está idle o en cycle. Si el MCU se cuelga, el keepalive se detiene — esto permite detectar problemas de hardware inmediatamente.
+El keep-alive automático (`[KA]`) fue **eliminado del main loop** para reducir flash. Solo se conserva `[KA] ALARM\r\n` en el loop crítico de alarmas (`protocol.c:255`). El host debe sondear estado mediante `?` o `#`. Si no hay respuesta, el MCU está colgado.
 
 ### Comando `#` (LLP Buffer Query)
 
@@ -49,7 +50,7 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Aspecto | Grbl estándar | grbl-llp |
 |---|---|---|
 | Protocolo de transporte | Texto plano (`\n` terminador) | LLP v3 binario con CRC16 |
-| Keep-alive | No disponible | `[KA] ...` cada 1s |
+| Keep-alive | No disponible | Eliminado del main loop; solo `[KA] ALARM` |
 | Buffer query | No disponible | `#` → `buf:N rx:N ...` |
 | Control de spindle | PWM/hardware | **Deshabilitado** (manual 12V) |
 | Control de coolant | Flood/mist | **Deshabilitado** |
@@ -57,8 +58,9 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Planos G18/G19 | Soportados | **Mapeados a G17** (XY) |
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
-| Flash usado | ~93% (Grbl original) | **93.5%** (optimizado para PCB) |
-| RAM usada | ~80% | **81.3%** |
+| Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
+| Flash usado | ~93% (Grbl original) | **91.1%** UNO / **95.7%** Nano (optimizado para PCB) |
+| RAM usada | ~80% | **83.3%** |
 
 ## Archivos agregados/modificados clave
 
@@ -67,12 +69,12 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | `src/llp_transport.c` / `src/llp_transport.h` | Recepción, TX flush non-blocking, stats, Timer2 ms counter |
 | `src/llp_protocol.h` | Parser de frames LLP v3 (single-header, layer chain) |
 | `src/serial.c` / `src/serial.h` | `volatile` en buffer heads, integración LLP con ISR serial |
-| `src/protocol.c` | Keep-alive cada 1s, comando `#`, alarm loop con keepalive mínimo |
+| `src/protocol.c` | Keep-alive eliminado del main loop; `[KA] ALARM` preservado en alarm loop; comando `#` con LLP stats |
 | `src/spindle_control.c` | Stubs vacíos (no spindle I/O) |
 | `src/coolant_control.c` | Stubs vacíos (no coolant I/O) |
 | `src/gcode.c` | TLO eliminado, G18/G19→G17, spindle/coolant no-op, M0/M1/M2/M30 no-op |
-| `src/report.c` | Spindle/coolant removido de `$G`, probe params stubbed |
-| `src/config.h` | Features deshabilitadas: `MESSAGE_PROBE_COORDINATES`, `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` |
+| `src/report.c` | Spindle/coolant removido de `$G`; `report_probe_parameters()` implementado con auto-report tras G38.x |
+| `src/config.h` | `MESSAGE_PROBE_COORDINATES` **habilitado** (auto-report probe); `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` deshabilitados |
 
 ## Hardware
 
@@ -148,24 +150,39 @@ python3 scripts/stream_gcode.py test_large.gcode --port /dev/ttyUSB0
 
 ## Flash y RAM
 
-- **Flash**: 93.5% (30174/32256 bytes) con `-Os`
-- **RAM**: 81.3% (1666/2048 bytes)
+- **Flash**: 91.1% (29394/32256 bytes UNO) / 95.7% (29394/30720 bytes Nano) con `-Os`
+- **RAM**: 83.3% (1706/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
+
+## Importante: Reseteo de EEPROM al flashear
+
+**Siempre ejecutar `$RST=$` después de flashear este firmware en un Arduino nuevo o usado.** Los datos previos en EEPROM (de Grbl stock, otro fork, o un board diferente) pueden contener floats inválidos que lockean el planificador al primer movimiento.
+
+**Síntomas de EEPROM corrupta:**
+- MCU se congela al ejecutar cualquier `G0`/`G1` (sin importar el eje)
+- `$$` muestra valores imposibles como `-2147483.648` o `0.000` en max_rate/acceleration
+- Faltan líneas en `$$` (ej: `$101`, `$120` ausentes)
+
+**Solución:**
+```bash
+echo '$RST=$' | python3 -c "
+import sys; sys.path.insert(0,'scripts')
+import serial, time, llp
+s = serial.Serial('/dev/ttyUSB0', 115200, timeout=3)
+s.setDTR(0); time.sleep(0.1); s.setDTR(1); time.sleep(2)
+s.read_all()
+frame = llp.encode(b'\$RST=\$\n')
+s.write(frame); time.sleep(1); s.close()
+"
+```
+
+Después verificar con `$$` y reconfigurar `$100`–`$132` para tu máquina.
 
 ## Issues conocidos
 
-### Arduino Uno con cuelgue en Z
+### Cuelgue en movimiento tras flashear
 
-Algunos Arduino Uno (o sus shields) presentan un **defecto de hardware** que hace que el MCU se congele al ejecutar pasos en Z_AXIS. Este problema **NO está en el firmware** — el mismo firmware funciona correctamente en Arduino Nano idéntico.
-
-**Workarounds:**
-1. Usar Arduino Nano (probado y funcional)
-2. Usar rama `custom` con Z_STEP remapeado a A4
-3. No usar Z (solo X/Y para PCB ya nivelada)
-
-### G2/G3 (arcos) en ciertos Arduinos
-
-En hardware defectuoso, los arcos complejos también pueden causar cuelgue. El streaming script detecta esto y reporta la línea exacta.
+El cuelgue al primer movimiento (antes reportado como "Z-axis bug" o "G2/G3 bug") fue rediagnosticado como **corrupción de EEPROM**. Ver sección "Reseteo de EEPROM" arriba. Si el board se cuelga después de `$RST=$`, puede haber un problema de hardware real.
 
 ## Librería cliente
 
