@@ -113,6 +113,7 @@ All error responses follow the format `error:N\r\n` where `N` is the numeric sta
 | **Safety door ajar while running** | `[MSG:Check Door]\r\n` | `protocol.c:317` |
 | **Probe success (G38.x)** | `[PRB:x.xxx,y.yyy,z.zzz:1]\r\n` — auto-reported after each successful G38.2/3/4/5 probe | `motion_control.c:311-314` |
 | **Probe failure (G38.x)** | `[PRB:x.xxx,y.yyy,z.zzz:0]\r\n` — auto-reported when probe did not trigger | `motion_control.c:311-314` |
+| **Reset cause** | `[MSG:RST:BOR\|EXT\|WDR\|POR\|SFR]\r\n` — auto-reported after every MCU reset. `BOR`=brown-out, `EXT`=external/RESET pin, `WDR`=watchdog, `POR`=power-on, `SFR`=soft firmware reset | `main.c` |
 
 ---
 
