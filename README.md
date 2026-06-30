@@ -129,7 +129,7 @@ pio run -e nano -t upload --upload-port /dev/ttyUSB0  # Subir
 El script `scripts/stream_gcode.py` envía archivos G-code completos al Arduino vía LLP:
 
 ```bash
-python3 scripts/stream_gcode.py test_large.gcode --port /dev/ttyUSB0
+python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /dev/ttyUSB0
 ```
 
 **Características:**
