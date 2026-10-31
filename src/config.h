@@ -699,6 +699,16 @@
    #define TX_BUFFER_SIZE 160
 */
 
+// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...] every 10s
+// via protocol_execute_realtime(). Helps diagnose MCU hangs during operation.
+// Flash cost: ~382 B (with SPI=29776, UNO 92.3%, Nano 96.9%). RAM cost: 4 B.
+// #define DEBUG_KEEPALIVE
+
+// Software debounce for control reset pin (A0). Filters EMI transients and mechanical
+// button bounce. 20ms is sufficient for most mechanical buttons (1-10ms bounce) and
+// EMI transients (<1ms). Increase if false triggers persist.
+#define CONTROL_RESET_DEBOUNCE_MS 20  // ms
+
 // LLP transport overrides (must be defined before llp_protocol.h is included)
 #define LLP_MAX_PAYLOAD 64
 #define LLP_ENABLE_STATS 0

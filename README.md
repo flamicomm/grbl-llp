@@ -59,7 +59,7 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
-| Flash usado | ~93% (Grbl original) | **91.1%** UNO / **95.7%** Nano (optimizado para PCB) |
+| Flash usado | ~93% (Grbl original) | **91.5%** UNO / **96.1%** Nano (optimizado para PCB) |
 | RAM usada | ~80% | **83.3%** |
 
 ## Archivos agregados/modificados clave
@@ -129,7 +129,7 @@ pio run -e nano -t upload --upload-port /dev/ttyUSB0  # Subir
 El script `scripts/stream_gcode.py` envía archivos G-code completos al Arduino vía LLP:
 
 ```bash
-python3 scripts/stream_gcode.py test_large.gcode --port /dev/ttyUSB0
+python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /dev/ttyUSB0
 ```
 
 **Características:**
@@ -150,8 +150,8 @@ python3 scripts/stream_gcode.py test_large.gcode --port /dev/ttyUSB0
 
 ## Flash y RAM
 
-- **Flash**: 91.1% (29394/32256 bytes UNO) / 95.7% (29394/30720 bytes Nano) con `-Os`
-- **RAM**: 83.3% (1706/2048 bytes)
+- **Flash**: 91.5% (29518/32256 bytes UNO) / 96.1% (29518/30720 bytes Nano) con `-Os`
+- **RAM**: 83.5% (1711/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
 
 ## Importante: Reseteo de EEPROM al flashear

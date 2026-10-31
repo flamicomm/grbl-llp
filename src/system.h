@@ -171,6 +171,12 @@ void system_init();
 // Returns bitfield of control pin states, organized by CONTROL_PIN_INDEX. (1=triggered, 0=not triggered).
 uint8_t system_control_get_state();
 
+// Software debounce for control reset pin (A0). Filters EMI transients and mechanical
+// button bounce. CONTROL_RESET_DEBOUNCE_MS defined in config.h.
+extern volatile uint8_t ctrl_reset_pending;
+extern volatile unsigned long ctrl_reset_time;
+void system_check_control_reset_debounce();
+
 // Returns if safety door is open or closed, based on pin state.
 uint8_t system_check_safety_door_ajar();
 

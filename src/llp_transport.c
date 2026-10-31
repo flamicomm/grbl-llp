@@ -276,3 +276,13 @@ unsigned long llp_transport_get_ms(void)
     SREG = sreg;
     return ms;
 }
+
+uint8_t llp_transport_get_tx_line_idx(void)
+{
+    uint8_t idx;
+    uint8_t sreg = SREG;
+    cli();
+    idx = llp_tx_line_idx;
+    SREG = sreg;
+    return idx;
+}

@@ -96,16 +96,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - **Critical: Motion hang on any axis** — previously misattributed to a Z‑axis pin bug. Root cause was EEPROM garbage (0x80000000 floats) from previous Grbl builds. Fixed by running `$RST=$` once after flashing.
 
-## [HEAD] - 2026-06-28
+## [HEAD] - 2026-10-31
 
 ### Added
+- **Software debounce for control reset pin (A0)** — `system_check_control_reset_debounce()` in `protocol_execute_realtime()` filters EMI transients and mechanical button bounce (20ms default, `CONTROL_RESET_DEBOUNCE_MS` in config.h). Prevents false SFR resets from EMI on A0.
+- **Debug keep-alive (`DEBUG_KEEPALIVE`)** — optional 10-second debug keep-alive printing `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...]` via `protocol_execute_realtime()`. Uncomment in config.h. Cost: ~382 B flash, 4 B RAM.
+- **`llp_transport_get_tx_line_idx()`** — new getter for LLP TX line buffer index (used by debug keep-alive).
 
 ### Changed
-  - changelog automatico corregido
+- **Flash/RAM usage updated**: UNO 91.5% (29518/32256), Nano 96.1% (29518/30720), RAM 83.5% (1711/2048)
+- **`system.c`**: `CONTROL_INT_vect` ISR now sets `ctrl_reset_pending` flag instead of calling `mc_reset()` directly (deferred reset with debounce)
+- **`protocol.c`**: `protocol_execute_realtime()` now calls `system_check_control_reset_debounce()`
 
 ### Fixed
-
-### Removed
+- **False SFR resets from EMI on A0** — root cause identified: EMI from 775 motor caused transient LOW on control reset pin (A0), triggering Pin Change ISR → `mc_reset()` → SFR reset. Fixed with software debounce.
 
 ### Other
   - Agregado mensaje de reset al inicio para saber razon por la que mcu se reinicio
