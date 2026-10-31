@@ -13,8 +13,8 @@ pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
 
 ## Flash Constraints
 
-- Flash: **91.1%** used (29394/32256 bytes for UNO; 95.7% Nano)
-- RAM: **83.3%** used (1706/2048 bytes; stack margin ~342 B)
+- Flash: **91.5%** used (29518/32256 bytes for UNO; 96.1% Nano)
+- RAM: **83.5%** used (1711/2048 bytes; stack margin ~337 B)
 - **Never use `-O0`** — flash overflows. Test changes with `-O0` only temporarily, then revert.
 - Adding debug features may require removing other code to fit.
 
@@ -31,7 +31,7 @@ pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
 |---|---|---|
 | `serial.c`, `serial.h` | `volatile` on `serial_rx_buffer_head` and `serial_tx_buffer_head` (shared ISR/main) |
 | `llp_transport.c` | Timer2 used for ms counter; non-blocking TX flush (discards on overflow) |
-| `protocol.c` | Keep-alive removed from main loop (2006-06-10); `[KA] ALARM` in critical alarm loop preserved; `#` command with LLP stats |
+| `protocol.c` | Keep-alive removed from main loop (2006-06-10); `[KA] ALARM` in critical alarm loop preserved; `#` command with LLP stats; software debounce for A0 reset pin (`system_check_control_reset_debounce()`) |
 | `config.h` | `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` disabled; `MESSAGE_PROBE_COORDINATES` **enabled** (auto-report after G38.x) |
 | `spindle_control.c` | Stubs only — no spindle I/O (manual 12V spindle) |
 | `coolant_control.c` | Stubs only — no coolant I/O |
@@ -69,7 +69,7 @@ Fields: `buf:N` (planner blocks), `rx:N` (LLP frames), `e:N` (errors), `t:N` (ti
 
 ## Critical Context
 
-- **Current RAM**: 1706/2048 B (83.3%); Flash: 29394/32256 B (91.1% UNO) / 29394/30720 B (95.7% Nano); stack margin ~342 B
+- **Current RAM**: 1711/2048 B (83.5%); Flash: 29518/32256 B (91.5% UNO) / 29518/30720 B (96.1% Nano); stack margin ~337 B
 - **ALARM:98 root cause**: Not a standard Grbl alarm code (only 1–10 defined). Most likely RAM corruption from stack overflow in LLP transport layer.
 - **Motion hang root cause**: Corrupted EEPROM settings (see "Motion Hang Due to Corrupted EEPROM Settings" below). `$RST=$` fixes it immediately.
 - **ESP8266 bridge**: Permanent intervening device on `/dev/ttyUSB0`. To upload to the Arduino, the ESP must be in transparent mode (works with `nano` env at 57600 baud). The UNO uses standard 115200 baud for upload.
@@ -119,6 +119,14 @@ The critical limit alarm loop (`protocol_exec_rt_system`) has a minimal keep-ali
 Keep-alive is compiled in by default. To disable:
 1. Remove or comment the keep-alive block in `protocol.c` main loop (~180-197)
 2. Remove `llp_stats_t` and `llp_transport_get_ms()` from `protocol.c` if no longer referenced
+
+### Software Debounce (A0 Reset Pin)
+
+The control reset pin (A0) now has software debounce via `system_check_control_reset_debounce()` in `protocol_execute_realtime()`. Default debounce: 20ms (`CONTROL_RESET_DEBOUNCE_MS` in `config.h`). Filters EMI transients and mechanical button bounce. To disable, set `CONTROL_RESET_DEBOUNCE_MS` to 0 (not recommended).
+
+### Debug Keep-Alive (DEBUG_KEEPALIVE)
+
+Uncomment `#define DEBUG_KEEPALIVE` in `config.h` to enable a 10-second debug keep-alive that prints `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...]` via `protocol_execute_realtime()`. Cost: ~382 B flash, 4 B RAM. Use to diagnose MCU hangs during operation.
 
 ## Changelog
 

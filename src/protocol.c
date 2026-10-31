@@ -226,6 +226,35 @@ void protocol_execute_realtime()
 {
   protocol_exec_rt_system();
   if (sys.suspend) { protocol_exec_rt_suspend(); }
+
+  system_check_control_reset_debounce();  // Software debounce for A0 reset pin
+
+  #ifdef DEBUG_KEEPALIVE
+  {
+    static unsigned long last_dbg_ka = 0;
+    unsigned long now = llp_transport_get_ms();
+    if (now - last_dbg_ka >= 10000) {
+      last_dbg_ka = now;
+      printPgmString(PSTR("[DBG:t="));
+      printInteger((long)now);
+      printPgmString(PSTR(" st="));
+      print_uint8_base10(sys.state);
+      printPgmString(PSTR(" tx="));
+      print_uint8_base10(serial_get_tx_buffer_count());
+      printPgmString(PSTR(" rx="));
+      print_uint8_base10(serial_get_rx_buffer_available());
+      printPgmString(PSTR(" bf="));
+      print_uint8_base10(plan_get_block_buffer_available());
+      printPgmString(PSTR(" li="));
+      print_uint8_base10(llp_transport_get_tx_line_idx());
+      printPgmString(PSTR(" sp="));
+      print_uint32_base10(SP);
+      printPgmString(PSTR(" u="));
+      print_uint8_base10(UCSR0B);
+      printPgmString(PSTR("]\r\n"));
+    }
+  }
+  #endif
 }
 
 

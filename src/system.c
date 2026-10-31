@@ -33,6 +33,10 @@ void system_init()
   PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
 }
 
+// Software debounce state for control reset pin (A0). Volatile because accessed
+// from both ISR (CONTROL_INT_vect) and main loop (system_check_control_reset_debounce).
+volatile uint8_t ctrl_reset_pending = 0;
+volatile unsigned long ctrl_reset_time = 0;
 
 // Returns control pin state as a uint8 bitfield. Each bit indicates the input pin state, where
 // triggered is 1 and not triggered is 0. Invert mask is applied. Bitfield organization is
@@ -56,6 +60,24 @@ uint8_t system_control_get_state()
   return(control_state);
 }
 
+// Software debounce for control reset pin (A0). Called from main loop via
+// protocol_execute_realtime(). If the reset pin remains LOW after
+// CONTROL_RESET_DEBOUNCE_MS, the reset is confirmed and mc_reset() is called.
+// Transient EMI/bounce pulses are ignored.
+void system_check_control_reset_debounce()
+{
+  if (ctrl_reset_pending) {
+    unsigned long now = llp_transport_get_ms();
+    if (now - ctrl_reset_time >= CONTROL_RESET_DEBOUNCE_MS) {
+      uint8_t pin = system_control_get_state();
+      if (bit_istrue(pin, CONTROL_PIN_INDEX_RESET)) {
+        mc_reset();  // Pin still LOW after debounce → confirmed reset
+      }
+      ctrl_reset_pending = 0;  // Clear flag (executed or was transient)
+    }
+  }
+}
+
 
 // Pin change interrupt for pin-out commands, i.e. cycle start, feed hold, and reset. Sets
 // only the realtime command execute variable to have the main program execute these when
@@ -66,7 +88,12 @@ ISR(CONTROL_INT_vect)
   uint8_t pin = system_control_get_state();
   if (pin) {
     if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
-      mc_reset();
+      // Deferred reset with debounce: set flag, main loop verifies after
+      // CONTROL_RESET_DEBOUNCE_MS. Prevents false triggers from EMI/bounce.
+      if (!ctrl_reset_pending) {
+        ctrl_reset_pending = 1;
+        ctrl_reset_time = llp_transport_get_ms();
+      }
     }
     if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
       bit_true(sys_rt_exec_state, EXEC_CYCLE_START);
