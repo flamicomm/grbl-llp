@@ -161,7 +161,7 @@
 // Upon a successful probe cycle, this option provides immediately feedback of the probe coordinates
 // through an automatically generated message. If disabled, users can still access the last probe
 // coordinates through Grbl '$#' print parameters.
-// #define MESSAGE_PROBE_COORDINATES // Disabled for minimal CNC (no probe).
+#define MESSAGE_PROBE_COORDINATES // Auto-report probe position after G38.x
 
 // Enables a second coolant control pin via the mist coolant g-code command M7 on the Arduino Uno
 // analog pin 4. Only use this option if you require a second coolant control pin.
@@ -698,6 +698,16 @@
    NOTE: This is already defined in serial.h but can be overridden here.
    #define TX_BUFFER_SIZE 160
 */
+
+// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...] every 10s
+// via protocol_execute_realtime(). Helps diagnose MCU hangs during operation.
+// Flash cost: ~382 B (with SPI=29776, UNO 92.3%, Nano 96.9%). RAM cost: 4 B.
+// #define DEBUG_KEEPALIVE
+
+// Software debounce for control reset pin (A0). Filters EMI transients and mechanical
+// button bounce. 20ms is sufficient for most mechanical buttons (1-10ms bounce) and
+// EMI transients (<1ms). Increase if false triggers persist.
+#define CONTROL_RESET_DEBOUNCE_MS 20  // ms
 
 // LLP transport overrides (must be defined before llp_protocol.h is included)
 #define LLP_MAX_PAYLOAD 64

@@ -31,6 +31,7 @@ volatile uint8_t sys_rt_exec_state;   // Global realtime executor bitflag variab
 volatile uint8_t sys_rt_exec_alarm;   // Global realtime executor bitflag variable for setting various alarms.
 volatile uint8_t sys_rt_exec_motion_override; // Global realtime executor bitflag variable for motion-based overrides.
 volatile uint8_t sys_rt_exec_accessory_override; // Global realtime executor bitflag variable for spindle/coolant overrides.
+volatile uint8_t last_mcusr; // Saved MCUSR register for reset cause diagnostics.
 #ifdef DEBUG
   volatile uint8_t sys_rt_exec_debug;
 #endif
@@ -38,6 +39,10 @@ volatile uint8_t sys_rt_exec_accessory_override; // Global realtime executor bit
 
 int main(void)
 {
+  // Save MCU reset cause before anything clears MCUSR, then clear it for next event.
+  last_mcusr = MCUSR;
+  MCUSR = 0;
+
   // Initialize system upon power-up.
   serial_init();   // Setup serial baud rate and interrupts
   settings_init(); // Load Grbl settings from EEPROM
@@ -100,6 +105,15 @@ int main(void)
 
     // Print welcome message. Indicates an initialization has occured at power-up or with a reset.
     report_init_message();
+
+    // Print reset cause for diagnostics. MCUSR was captured at power-up; cleared afterwards
+    // so subsequent soft resets through the main loop are reported as SFR.
+    if (last_mcusr & (1<<BORF)) { printPgmString(PSTR("[MSG:RST:BOR]\r\n")); }
+    else if (last_mcusr & (1<<EXTRF)) { printPgmString(PSTR("[MSG:RST:EXT]\r\n")); }
+    else if (last_mcusr & (1<<WDRF)) { printPgmString(PSTR("[MSG:RST:WDR]\r\n")); }
+    else if (last_mcusr & (1<<PORF)) { printPgmString(PSTR("[MSG:RST:POR]\r\n")); }
+    else { printPgmString(PSTR("[MSG:RST:SFR]\r\n")); }
+    last_mcusr = 0;
 
     // Start Grbl main loop. Processes program inputs and executes them.
     protocol_main_loop();

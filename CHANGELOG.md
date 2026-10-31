@@ -75,25 +75,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Fixed
 - Pin A4 used for Z-axis movement (workaround for original D4 pin conflict causing MCU hang)
 
+[1.2.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.2.0
 [1.1.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.1.0
 [1.0.1]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.1
 [1.0.0]: https://github.com/flamicomm/grbl-llp/releases/tag/v1.0.0
 
 
-## [HEAD] - 2026-06-10
+## [1.2.0] - 2026-06-28
 
 ### Added
+- **Probe auto-report after G38.x**: Enabled `MESSAGE_PROBE_COORDINATES` in config.h; implemented `report_probe_parameters()` in report.c using original Grbl 1.1h code. Firmware now auto-sends `[PRB:x,y,z:s]\r\n` after each probe cycle — no `?` polling needed.
+- **MCUSR reset cause logging**: Added `last_mcusr` global, read MCUSR at startup, and auto-report `[MSG:RST:BOR|EXT|WDR|POR|SFR]\r\n` after every welcome message to diagnose random resets during milling.
+- Documented EEPROM corruption bug in AGENTS.md — corrupted `max_rate`, `acceleration`, or `junction_deviation` float values cause planner lockup on any motion command
 
 ### Changed
-  - changelog automatico corregido
-  - changelog automatico corregido
+- Updated AGENTS.md: "Z-axis hang" rediagnosed as corrupted EEPROM settings bug; flash/RAM values updated; probe auto-report and reset-cause logging documented
+- Updated README.md: documented mandatory `$RST=$` after flashing; updated flash/RAM/keep-alive/LLP version to match current code
+- Updated doc/markdown/commands.md: added G38.x probing section and `[MSG:RST:...]` message
 
 ### Fixed
+- **Critical: Motion hang on any axis** — previously misattributed to a Z‑axis pin bug. Root cause was EEPROM garbage (0x80000000 floats) from previous Grbl builds. Fixed by running `$RST=$` once after flashing.
 
-### Removed
+## [HEAD] - 2026-10-31
+
+### Added
+- **Software debounce for control reset pin (A0)** — `system_check_control_reset_debounce()` in `protocol_execute_realtime()` filters EMI transients and mechanical button bounce (20ms default, `CONTROL_RESET_DEBOUNCE_MS` in config.h). Prevents false SFR resets from EMI on A0.
+- **Debug keep-alive (`DEBUG_KEEPALIVE`)** — optional 10-second debug keep-alive printing `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...]` via `protocol_execute_realtime()`. Uncomment in config.h. Cost: ~382 B flash, 4 B RAM.
+- **`llp_transport_get_tx_line_idx()`** — new getter for LLP TX line buffer index (used by debug keep-alive).
+
+### Changed
+- **Flash/RAM usage updated**: UNO 91.5% (29518/32256), Nano 96.1% (29518/30720), RAM 83.5% (1711/2048)
+- **`system.c`**: `CONTROL_INT_vect` ISR now sets `ctrl_reset_pending` flag instead of calling `mc_reset()` directly (deferred reset with debounce)
+- **`protocol.c`**: `protocol_execute_realtime()` now calls `system_check_control_reset_debounce()`
+
+### Fixed
+- **False SFR resets from EMI on A0** — root cause identified: EMI from 775 motor caused transient LOW on control reset pin (A0), triggering Pin Change ISR → `mc_reset()` → SFR reset. Fixed with software debounce.
 
 ### Other
-  - Se reduce tamaño de buffers y se realizan optimizaciones de memoria RAM. Creado CHANGELOG automatico
-  - Actualizada librería llp a la versión 3.1.0
-  - Actualizado script para simular envío de programa al dispositivo
-  - Se elimina salto de línea que agregaba el firmware en la comunicación
+  - Agregado mensaje de reset al inicio para saber razon por la que mcu se reinicio
+  - Añadido PROBE para autonivelado
+  - Documentado fix importante sobre cuelgues del MCU al mover eje Z
+  - Reestructuración de docs/commands.md con información ampliada sobre comandos grbl y sus respuestas
+  - Actualizado CHANGELOG

@@ -43,5 +43,6 @@ typedef struct {
 void llp_transport_get_stats(llp_stats_t *stats);
 void llp_transport_reset_stats(void);
 unsigned long llp_transport_get_ms(void);
+uint8_t llp_transport_get_tx_line_idx(void);
 
 #endif
