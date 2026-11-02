@@ -262,6 +262,8 @@ void protocol_execute_realtime()
         printInteger(stats.rx_dropped);
         printPgmString(PSTR(" td="));
         printInteger(stats.tx_dropped);
+        printPgmString(PSTR(" ca="));
+        print_uint8_base10(a0_transient_count);
       }
       printPgmString(PSTR("]\r\n"));
     }

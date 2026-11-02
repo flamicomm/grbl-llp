@@ -25,6 +25,12 @@
 // the main loop / reset handler.
 volatile uint8_t last_reset_source = RESET_SRC_NONE;
 
+// A0 (reset/abort) pulses that were filtered out by the debounce. A growing
+// value during a job means EMI on that pin; it is reported as "ca=" in the
+// DEBUG_KEEPALIVE line. Saturates instead of wrapping so it stays monotonic,
+// and the increment is a single byte write, which is atomic on AVR.
+volatile uint8_t a0_transient_count = 0;
+
 void system_set_reset_source(uint8_t src)
 {
     last_reset_source = src;
@@ -33,13 +39,13 @@ void system_set_reset_source(uint8_t src)
 
 void system_init()
 {
-  CONTROL_DDR &= ~(CONTROL_MASK); // Configure as input pins
+  CONTROL_DDR &= ~(CONTROL_MASK_USED); // Configure as input pins
   #ifdef DISABLE_CONTROL_PIN_PULL_UP
-    CONTROL_PORT &= ~(CONTROL_MASK); // Normal low operation. Requires external pull-down.
+    CONTROL_PORT &= ~(CONTROL_MASK_USED); // Normal low operation. Requires external pull-down.
   #else
-    CONTROL_PORT |= CONTROL_MASK;   // Enable internal pull-up resistors. Normal high operation.
+    CONTROL_PORT |= CONTROL_MASK_USED;   // Enable internal pull-up resistors. Normal high operation.
   #endif
-  CONTROL_PCMSK |= CONTROL_MASK;  // Enable specific pins of the Pin Change Interrupt
+  CONTROL_PCMSK |= CONTROL_MASK_USED;  // Enable specific pins of the Pin Change Interrupt
   PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
 }
 
@@ -54,7 +60,7 @@ volatile unsigned long ctrl_reset_time = 0;
 uint8_t system_control_get_state()
 {
   uint8_t control_state = 0;
-  uint8_t pin = (CONTROL_PIN & CONTROL_MASK) ^ CONTROL_MASK;
+  uint8_t pin = (CONTROL_PIN & CONTROL_MASK_USED) ^ CONTROL_MASK_USED;
   #ifdef INVERT_CONTROL_PIN_MASK
     pin ^= INVERT_CONTROL_PIN_MASK;
   #endif
@@ -71,20 +77,20 @@ uint8_t system_control_get_state()
 }
 
 // Software debounce for control reset pin (A0). Called from main loop via
-// protocol_execute_realtime(). If the reset pin remains LOW after
-// CONTROL_RESET_DEBOUNCE_MS, the reset is confirmed and mc_reset() is called.
-// Transient EMI/bounce pulses are ignored.
+// protocol_execute_realtime(). The ISR arms the timer on the falling edge and
+// *clears* it if the pin is released, so reaching the deadline means A0 stayed
+// LOW continuously for CONTROL_RESET_DEBOUNCE_MS. Transient EMI/bounce pulses
+// are counted in a0_transient_count and never reset the MCU.
 void system_check_control_reset_debounce()
 {
   if (ctrl_reset_pending) {
     unsigned long now = llp_transport_get_ms();
     if (now - ctrl_reset_time >= CONTROL_RESET_DEBOUNCE_MS) {
-      uint8_t pin = system_control_get_state();
-      if (bit_istrue(pin, CONTROL_PIN_INDEX_RESET)) {
+      ctrl_reset_pending = 0;
+      if (bit_istrue(system_control_get_state(), CONTROL_PIN_INDEX_RESET)) {
         system_set_reset_source(RESET_SRC_A0);
         mc_reset();  // Pin still LOW after debounce → confirmed reset
       }
-      ctrl_reset_pending = 0;  // Clear flag (executed or was transient)
     }
   }
 }
@@ -97,15 +103,20 @@ void system_check_control_reset_debounce()
 ISR(CONTROL_INT_vect)
 {
   uint8_t pin = system_control_get_state();
-  if (pin) {
-    if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
-      // Deferred reset with debounce: set flag, main loop verifies after
-      // CONTROL_RESET_DEBOUNCE_MS. Prevents false triggers from EMI/bounce.
-      if (!ctrl_reset_pending) {
-        ctrl_reset_pending = 1;
-        ctrl_reset_time = llp_transport_get_ms();
-      }
+  if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
+    // Deferred reset with debounce: arm the timer on the falling edge. The main
+    // loop confirms the reset only if A0 is still LOW when the window expires.
+    if (!ctrl_reset_pending) {
+      ctrl_reset_pending = 1;
+      ctrl_reset_time = llp_transport_get_ms();
     }
+  } else if (ctrl_reset_pending) {
+    // Pin released before the debounce window expired: transient pulse filtered
+    // (mechanical bounce or EMI). Count it so the debug keepalive can expose it.
+    ctrl_reset_pending = 0;
+    if (a0_transient_count < 255) { a0_transient_count++; }
+  }
+  if (pin) {
     if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
       bit_true(sys_rt_exec_state, EXEC_CYCLE_START);
     }

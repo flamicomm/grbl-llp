@@ -177,6 +177,9 @@ extern volatile uint8_t sys_rt_exec_accessory_override; // Global realtime execu
 #define RESET_SRC_HOMING      7  // Homing failure/reset
 
 extern volatile uint8_t last_reset_source;
+// A0 reset/abort pulses filtered by the debounce (EMI indicator, "ca=" in the
+// debug keepalive). Saturates at 255.
+extern volatile uint8_t a0_transient_count;
 void system_set_reset_source(uint8_t src);
 
 // Initialize the serial protocol

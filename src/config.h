@@ -699,9 +699,11 @@
    #define TX_BUFFER_SIZE 160
 */
 
-// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...] every 10s
-// via protocol_execute_realtime(). Helps diagnose MCU hangs during operation.
-// Flash cost: ~382 B (with SPI=29776, UNO 92.3%, Nano 96.9%). RAM cost: 4 B.
+// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=...
+// sp=... u=... re=... rt=... rd=... td=... ca=...] every 10s via
+// protocol_execute_realtime(). Helps diagnose MCU hangs, LLP traffic problems and
+// EMI on the control pins during a job (ca = A0 pulses filtered by the debounce).
+// Measure the flash cost with avr-size before enabling it on a full build.
 #define DEBUG_KEEPALIVE
 
 // Software debounce for control reset pin (A0). Filters EMI transients and mechanical
@@ -709,6 +711,13 @@
 // EMI transients (<1ms). Increased to 100ms for machines with a brushed spindle and
 // a floating A0 pin (no abort button), where longer EMI bursts are common.
 #define CONTROL_RESET_DEBOUNCE_MS 100  // ms
+
+// Uncomment on machines with **no abort button** wired to A0 (Reset/Abort of the
+// CNC shield). A floating A0 next to a brushed spindle picks up EMI and can hold
+// the pin LOW long enough to pass the debounce, resetting the MCU mid-job. This
+// removes A0 from the control input mask entirely: no pin-change interrupt, no
+// reset. Feed hold (A1) and cycle start (A2) keep working.
+// #define DISABLE_CONTROL_RESET_PIN
 
 // LLP transport overrides (must be defined before llp_protocol.h is included)
 #define LLP_MAX_PAYLOAD 64

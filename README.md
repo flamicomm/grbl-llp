@@ -189,12 +189,14 @@ El cuelgue al primer movimiento (antes reportado como "Z-axis bug" o "G2/G3 bug"
 `DEBUG_KEEPALIVE` está habilitado por defecto y emite cada 10 s:
 
 ```
-[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=...]
+[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=... ca=...]
 ```
 
 Si el MCU se reinicia, imprime la causa (`[MSG:RST:BOR|EXT|WDR|POR|SFR]`) y, para
 soft resets, el origen (`[MSG:RST:SRC:LLP|A0|RST|HARD_LIMIT|SOFT_LIMIT|HOMING|OTHER]`).
-El debounce del pin A0 es de 100 ms. Detalle en [`doc/known-issues.md`](doc/known-issues.md).
+El campo `ca=` cuenta los pulsos de A0 descartados por el debounce (EMI), y el
+debounce exige 100 ms de nivel bajo continuo. Detalle y mitigaciones en
+[`doc/known-issues.md`](doc/known-issues.md).
 
 ## Documentación técnica interna
 

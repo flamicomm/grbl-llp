@@ -50,14 +50,18 @@ alarmas.
 - El host debe sondear con `?` o `#`. Si no hay respuesta, el MCU está colgado.
 - El keep-alive de depuración (`DEBUG_KEEPALIVE`) está **habilitado** en
   `src/config.h` para diagnóstico de campo. Imprime cada 10 s:
-  `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=...]`.
+  `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=... ca=...]`.
   - `sp` muy bajo → stack profundo / riesgo de desborde.
   - `tx`/`rx` saturados → cuello de botella serial.
   - `bf=0` → planner lleno (normal en streaming).
   - `u` = `UCSR0B` (bit `UDRIE0` indica TX pendiente).
   - `re`/`rt`/`rd`/`td` = errores, timeouts, drops RX y drops TX de LLP.
-  Ocupa ~1 KB de flash extra en el UNO (93.4% usado). En el Nano queda al 98%:
-  si no entra, deshabilitarlo con `// #define DEBUG_KEEPALIVE`.
+  - `ca` = pulsos en A0 (reset/abort) descartados por el debounce. Si crece
+    durante un corte, hay EMI en ese pin aunque no llegue a reiniciar el MCU.
+    Satura en 255 y sobrevive a los soft resets (no se reinicializa en RAM).
+  El costo en flash depende del build: medilo con `avr-size` antes de afirmar
+  que entra. En el Nano el margen es mínimo: si no entra, deshabilitarlo con
+  `// #define DEBUG_KEEPALIVE`.
 
 ## 4b. Reset del MCU: `[MSG:RST:...]`
 
@@ -82,10 +86,20 @@ Cuando es `SFR`, se agrega el origen:
 | `HOMING` | Fallo de homing |
 | `OTHER` | Otro `mc_reset()` sin anotar |
 
-El debounce de A0 está en **100 ms** (`CONTROL_RESET_DEBOUNCE_MS`) para tolerar
-EMI de husillos con escobillas. Si el origen es `A0` y no hay botón de abort
-conectado, agregar pull-up externo de 10 kΩ + 100 nF a GND en A0, o desconectar
-ese pin del shield.
+El debounce de A0 está en **100 ms** (`CONTROL_RESET_DEBOUNCE_MS`) y exige nivel
+**bajo continuo**: la ISR arma el temporizador en el flanco de bajada y lo cancela
+si el pin vuelve a HIGH, así que un pulso corto nunca reinicia el MCU (se cuenta
+en `ca=`). Si el origen es `A0` y no hay botón de abort conectado:
+
+1. Pull-up externo de 10 kΩ + 100 nF a GND en A0 (lo más robusto), o
+2. desconectar A0 del shield, o
+3. compilar con `#define DISABLE_CONTROL_RESET_PIN` (`src/config.h`), que saca A0
+   del mask de control: sin PCINT y sin reset. Feed hold (A1) y cycle start (A2)
+   siguen funcionando.
+
+Diagnóstico diferencial: `HARD_LIMIT`, `SOFT_LIMIT` y `HOMING` **no pueden**
+producir `SFR`; entran al bucle `[KA] ALARM` de `protocol_exec_rt_system()` y
+esperan un reset explícito. Un `SFR` sin `[KA] ALARM` previo apunta a A0 o a LLP.
 
 ## 5. Subida al Arduino a través del ESP8266
 

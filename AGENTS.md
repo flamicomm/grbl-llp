@@ -77,6 +77,7 @@ Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `REA
 | `[MSG:RST:SFR]` + `[MSG:RST:SRC:A0]` | Pin A0 disparado por EMI (sin botón) | pull-up 10k + 100nF en A0, o desconectar A0 |
 | `[MSG:RST:SRC:HARD_LIMIT/SOFT_LIMIT]` | Alarma de límites | revisar recorrido / `$20`/`$21` |
 | `[DBG:... sp=...]` con `sp` muy bajo | Stack profundo | revisar buffers/stack (`doc/buffers.md`) |
+| `[DBG:... ca=...]` creciendo durante un corte | EMI en A0 (pulsos filtrados por el debounce) | pull-up 10 k + 100 nF, desconectar A0 o `DISABLE_CONTROL_RESET_PIN` |
 
 ## Documentación
 
