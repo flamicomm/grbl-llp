@@ -1,0 +1,73 @@
+# AGENTS.md — `src/` (firmware)
+
+Notas de bajo nivel. Se cargan al trabajar dentro de `src/`. Las reglas generales
+(build, git, estilo, diagnóstico) están en el `AGENTS.md` de la raíz.
+
+## Orden de arranque
+
+`src/main.c:43` guarda `MCUSR` antes de limpiarlo (se reporta como `[MSG:RST:*]`).
+Luego `src/main.c:48-52`:
+
+1. `serial_init()` — baud + ISR UART + `llp_transport_init()`
+2. `settings_init()` — carga settings desde EEPROM
+3. `stepper_init()` — pines y timers de stepper
+4. `system_init()` — pines de control y pin-change interrupt
+5. `sei()` — habilita interrupciones
+
+Después entra al `for(;;)` de inicialización (`src/main.c:69`), que limpia `sys`,
+ejecuta startup lines y llama a `protocol_main_loop()` (`src/main.c:119`).
+
+## Mapa de interrupciones (todas verificadas)
+
+| ISR | Archivo:línea | Rol |
+|---|---|---|
+| `SERIAL_RX` | `src/serial.c:134` | recibe byte UART → `llp_transport_rx_byte()` |
+| `SERIAL_UDRE` | `src/serial.c:99` | TX listo → `llp_transport_tx_byte()` |
+| `TIMER1_COMPA_vect` | `src/stepper.c:319` | segmento del planificador (genera pulsos) |
+| `TIMER0_OVF_vect` | `src/stepper.c:489` | temporización de pulso STEP |
+| `TIMER0_COMPA_vect` | `src/stepper.c:504` | fin del `STEP_PULSE_DELAY` |
+| `TIMER2_OVF_vect` | `src/llp_transport.c:55` | contador de ms de LLP |
+| `LIMIT_INT_vect` | `src/limits.c:110` | pin-change de límites (hard limits) |
+| `WDT_vect` | `src/limits.c:135` | watchdog (uso interno de Grbl) |
+| `CONTROL_INT_vect` | `src/system.c:86` | pin-change de control (reset/cycle/feed hold) |
+
+**Timer0, Timer1 y Timer2 están ocupados.** No agregues ISRs ni reconfigures prescalers
+sin revisar el impacto en step timing o en el contador de ms de LLP.
+
+## Estado de flags en `src/config.h`
+
+| Flag | Estado | Línea |
+|---|---|---|
+| `MESSAGE_PROBE_COORDINATES` | habilitado (auto-report tras G38.x) | `164` |
+| `CHECK_LIMITS_AT_INIT` | deshabilitado (sin switches) | `230` |
+| `REPORT_FIELD_*` | deshabilitados, salvo `LINE_NUMBERS` | `269-274` |
+| `ENABLE_BUILD_INFO_WRITE_COMMAND` | deshabilitado (`$I=` no existe) | `520` |
+| `DEBUG_KEEPALIVE` | deshabilitado | `705` |
+| `CONTROL_RESET_DEBOUNCE_MS` | `20` ms | `710` |
+| `LLP_MAX_PAYLOAD` | `64` | `713` |
+| `LLP_ENABLE_STATS` | `0` (stats de parser fuera) | `714` |
+
+Los números de línea de esta tabla son volátiles: confírmalos con
+`grep -n "<FLAG>" src/config.h` antes de citarlos en otro sitio.
+
+## Integración LLP ↔ Grbl
+
+| Punto | Archivo:línea | Qué hace |
+|---|---|---|
+| init | `src/serial.c:86` | `llp_transport_init()` tras configurar UART |
+| TX | `src/serial.c:94` | `serial_write()` delega en `llp_transport_tx_byte()` |
+| RX | `src/serial.c:137` | la ISR delega en `llp_transport_rx_byte()` |
+| stats | `src/llp_transport.c:244` | `llp_transport_get_stats()` |
+| comando `#` | `src/protocol.c:101-114` | imprime `buf/rx/e/t/rd/td` |
+
+## Cuidados en `src/`
+
+- **`src/*.bak` no son fuente** (`config.h.bak`, `protocol.c.bak`, `planner.c.bak`,
+  `gcode.c.bak`, `coolant_control.c.bak`): no se editan, no se compilan y no valen
+  como evidencia de comportamiento.
+- El bloque comentado de `src/config.h` (~678–700) documenta valores viejos; el valor
+  activo puede vivir en otro header. Ver `doc/buffers.md`.
+- ISRs cortas: nada de `printString`/`report_*` dentro de una ISR; encola y procesa
+  en `protocol_execute_realtime()`.
+- Cualquier campo nuevo en `sys` o `settings` consume RAM permanente: mide con
+  `avr-size` antes de dar el cambio por bueno.

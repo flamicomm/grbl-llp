@@ -33,7 +33,7 @@ LLP (Layered Link Protocol) v3.1.0 es un protocolo binario de transporte que gar
 
 ### Keep-alive
 
-El keep-alive automático (`[KA]`) fue **eliminado del main loop** para reducir flash. Solo se conserva `[KA] ALARM\r\n` en el loop crítico de alarmas (`protocol.c:255`). El host debe sondear estado mediante `?` o `#`. Si no hay respuesta, el MCU está colgado.
+El keep-alive automático (`[KA]`) fue **eliminado del main loop** para reducir flash. Solo se conserva `[KA] ALARM\r\n` en el loop crítico de alarmas (`protocol.c:284`). El host debe sondear estado mediante `?` o `#`. Si no hay respuesta, el MCU está colgado.
 
 ### Comando `#` (LLP Buffer Query)
 
@@ -60,7 +60,7 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
 | Flash usado | ~93% (Grbl original) | **91.5%** UNO / **96.1%** Nano (optimizado para PCB) |
-| RAM usada | ~80% | **83.3%** |
+| RAM usada | ~80% | **83.5%** |
 
 ## Archivos agregados/modificados clave
 
@@ -183,6 +183,25 @@ Después verificar con `$$` y reconfigurar `$100`–`$132` para tu máquina.
 ### Cuelgue en movimiento tras flashear
 
 El cuelgue al primer movimiento (antes reportado como "Z-axis bug" o "G2/G3 bug") fue rediagnosticado como **corrupción de EEPROM**. Ver sección "Reseteo de EEPROM" arriba. Si el board se cuelga después de `$RST=$`, puede haber un problema de hardware real.
+
+### Diagnóstico de resets
+
+`DEBUG_KEEPALIVE` está habilitado por defecto y emite cada 10 s:
+
+```
+[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=...]
+```
+
+Si el MCU se reinicia, imprime la causa (`[MSG:RST:BOR|EXT|WDR|POR|SFR]`) y, para
+soft resets, el origen (`[MSG:RST:SRC:LLP|A0|RST|HARD_LIMIT|SOFT_LIMIT|HOMING|OTHER]`).
+El debounce del pin A0 es de 100 ms. Detalle en [`doc/known-issues.md`](doc/known-issues.md).
+
+## Documentación técnica interna
+
+- [`doc/buffers.md`](doc/buffers.md) — tamaños de buffer, dependencias y trampa del bloque comentado de `config.h`.
+- [`doc/known-issues.md`](doc/known-issues.md) — rediagnóstico del "bug Z", `ALARM:98`, keep-alive, frames descartados.
+- [`doc/changelog-workflow.md`](doc/changelog-workflow.md) — hooks `post-commit`/`post-merge` y flujo de PR.
+- [`AGENTS.md`](AGENTS.md) — reglas normativas para agentes; [`src/AGENTS.md`](src/AGENTS.md) — init, ISRs y flags de firmware.
 
 ## Librería cliente
 

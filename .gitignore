@@ -26,3 +26,6 @@ __pycache__
 *.7z
 *.gz
 *.bz2
+
+# Scout diagnostic artifacts (transient, regenerate on demand)
+.context/
