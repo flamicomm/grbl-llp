@@ -119,6 +119,7 @@ uint8_t limits_get_state()
         #ifdef HARD_LIMIT_FORCE_STATE_CHECK
           // Check limit pin state.
           if (limits_get_state()) {
+            system_set_reset_source(RESET_SRC_HARD_LIMIT);
             mc_reset(); // Initiate system kill.
             system_set_exec_alarm(EXEC_ALARM_HARD_LIMIT); // Indicate hard limit critical event
           }
@@ -139,6 +140,7 @@ uint8_t limits_get_state()
       if (!(sys_rt_exec_alarm)) {
         // Check limit pin state. 
         if (limits_get_state()) {
+          system_set_reset_source(RESET_SRC_HARD_LIMIT);
           mc_reset(); // Initiate system kill.
           system_set_exec_alarm(EXEC_ALARM_HARD_LIMIT); // Indicate hard limit critical event
         }
@@ -302,6 +304,7 @@ void limits_go_home(uint8_t cycle_mask)
               } else {
                 if (abs(dual_trigger_position - sys_position[DUAL_AXIS_SELECT]) > dual_fail_distance) {
                   system_set_exec_alarm(EXEC_ALARM_HOMING_FAIL_DUAL_APPROACH);
+                  system_set_reset_source(RESET_SRC_HOMING);
                   mc_reset();
                   protocol_execute_realtime();
                   return;
@@ -329,6 +332,7 @@ void limits_go_home(uint8_t cycle_mask)
         // Homing failure condition: Limit switch not found during approach.
         if (approach && (rt_exec & EXEC_CYCLE_STOP)) { system_set_exec_alarm(EXEC_ALARM_HOMING_FAIL_APPROACH); }
         if (sys_rt_exec_alarm) {
+          system_set_reset_source(RESET_SRC_HOMING);
           mc_reset(); // Stop motors, if they are running.
           protocol_execute_realtime();
           return;
@@ -422,6 +426,7 @@ void limits_soft_check(float *target)
         if (sys.abort) { return; }
       } while ( sys.state != STATE_IDLE );
     }
+    system_set_reset_source(RESET_SRC_SOFT_LIMIT);
     mc_reset(); // Issue system reset and ensure spindle and coolant are shutdown.
     system_set_exec_alarm(EXEC_ALARM_SOFT_LIMIT); // Indicate soft limit critical event
     protocol_execute_realtime(); // Execute to enter critical event loop and system abort

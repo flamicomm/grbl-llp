@@ -76,6 +76,7 @@ static void llp_process_payload(const uint8_t *payload, uint16_t len)
         uint8_t c = payload[i];
         switch (c) {
             case CMD_RESET:
+                system_set_reset_source(RESET_SRC_LLP);
                 mc_reset();
                 break;
             case CMD_STATUS_REPORT:

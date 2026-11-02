@@ -112,8 +112,25 @@ int main(void)
     else if (last_mcusr & (1<<EXTRF)) { printPgmString(PSTR("[MSG:RST:EXT]\r\n")); }
     else if (last_mcusr & (1<<WDRF)) { printPgmString(PSTR("[MSG:RST:WDR]\r\n")); }
     else if (last_mcusr & (1<<PORF)) { printPgmString(PSTR("[MSG:RST:POR]\r\n")); }
-    else { printPgmString(PSTR("[MSG:RST:SFR]\r\n")); }
+    else {
+      printPgmString(PSTR("[MSG:RST:SFR]\r\n"));
+      // Only a bare soft reset needs a source annotation. Hardware resets
+      // (BOR/EXT/WDR/POR) are already self-explanatory.
+      printPgmString(PSTR("[MSG:RST:SRC:"));
+      switch (last_reset_source) {
+        case RESET_SRC_LLP:        printPgmString(PSTR("LLP")); break;
+        case RESET_SRC_A0:         printPgmString(PSTR("A0")); break;
+        case RESET_SRC_RST:        printPgmString(PSTR("RST")); break;
+        case RESET_SRC_HARD_LIMIT: printPgmString(PSTR("HARD_LIMIT")); break;
+        case RESET_SRC_SOFT_LIMIT: printPgmString(PSTR("SOFT_LIMIT")); break;
+        case RESET_SRC_HOMING:     printPgmString(PSTR("HOMING")); break;
+        case RESET_SRC_OTHER:      printPgmString(PSTR("OTHER")); break;
+        default:                   printPgmString(PSTR("NONE")); break;
+      }
+      printPgmString(PSTR("]\r\n"));
+    }
     last_mcusr = 0;
+    last_reset_source = RESET_SRC_NONE;
 
     // Start Grbl main loop. Processes program inputs and executes them.
     protocol_main_loop();

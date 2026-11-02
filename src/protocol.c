@@ -251,6 +251,18 @@ void protocol_execute_realtime()
       print_uint32_base10(SP);
       printPgmString(PSTR(" u="));
       print_uint8_base10(UCSR0B);
+      {
+        llp_stats_t stats;
+        llp_transport_get_stats(&stats);
+        printPgmString(PSTR(" re="));
+        printInteger(stats.rx_errors);
+        printPgmString(PSTR(" rt="));
+        printInteger(stats.rx_timeouts);
+        printPgmString(PSTR(" rd="));
+        printInteger(stats.rx_dropped);
+        printPgmString(PSTR(" td="));
+        printInteger(stats.tx_dropped);
+      }
       printPgmString(PSTR("]\r\n"));
     }
   }

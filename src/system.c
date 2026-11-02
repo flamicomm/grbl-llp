@@ -21,6 +21,16 @@
 #include "grbl.h"
 
 
+// Volatile because it is written from ISR context (A0 pin) and read from
+// the main loop / reset handler.
+volatile uint8_t last_reset_source = RESET_SRC_NONE;
+
+void system_set_reset_source(uint8_t src)
+{
+    last_reset_source = src;
+}
+
+
 void system_init()
 {
   CONTROL_DDR &= ~(CONTROL_MASK); // Configure as input pins
@@ -71,6 +81,7 @@ void system_check_control_reset_debounce()
     if (now - ctrl_reset_time >= CONTROL_RESET_DEBOUNCE_MS) {
       uint8_t pin = system_control_get_state();
       if (bit_istrue(pin, CONTROL_PIN_INDEX_RESET)) {
+        system_set_reset_source(RESET_SRC_A0);
         mc_reset();  // Pin still LOW after debounce → confirmed reset
       }
       ctrl_reset_pending = 0;  // Clear flag (executed or was transient)
@@ -259,6 +270,7 @@ uint8_t system_execute_line(char *line)
             default: return(STATUS_INVALID_STATEMENT);
           }
           report_feedback_message(MESSAGE_RESTORE_DEFAULTS);
+          system_set_reset_source(RESET_SRC_RST);
           mc_reset(); // Force reset to ensure settings are initialized correctly.
           break;
         case 'N' : // Startup lines. [IDLE/ALARM]

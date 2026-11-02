@@ -165,6 +165,20 @@ extern volatile uint8_t sys_rt_exec_accessory_override; // Global realtime execu
   extern volatile uint8_t sys_rt_exec_debug;
 #endif
 
+// Reset source diagnostics. Set by the code that requests a soft reset so
+// main.c can report *why* the MCU re-initialized instead of a bare "SFR".
+#define RESET_SRC_NONE        0
+#define RESET_SRC_OTHER       1
+#define RESET_SRC_LLP         2  // CMD_RESET (0x18) received inside an LLP frame
+#define RESET_SRC_A0          3  // Control reset pin A0 (debounced) triggered
+#define RESET_SRC_RST         4  // $RST command
+#define RESET_SRC_HARD_LIMIT  5  // Hard limit alarm
+#define RESET_SRC_SOFT_LIMIT  6  // Soft limit alarm
+#define RESET_SRC_HOMING      7  // Homing failure/reset
+
+extern volatile uint8_t last_reset_source;
+void system_set_reset_source(uint8_t src);
+
 // Initialize the serial protocol
 void system_init();
 
