@@ -76,22 +76,37 @@ uint8_t system_control_get_state()
   return(control_state);
 }
 
-// Software debounce for control reset pin (A0). Called from main loop via
-// protocol_execute_realtime(). The ISR arms the timer on the falling edge and
-// *clears* it if the pin is released, so reaching the deadline means A0 stayed
-// LOW continuously for CONTROL_RESET_DEBOUNCE_MS. Transient EMI/bounce pulses
-// are counted in a0_transient_count and never reset the MCU.
+// Software debounce for control reset pin (A0). Called from the main loop via
+// protocol_exec_rt_system(), which also runs inside the suspend loop (feed hold,
+// safety door, sleep). The ISR arms the timer on the falling edge and *clears*
+// it if the pin is released, so reaching the deadline means A0 stayed LOW
+// continuously for CONTROL_RESET_DEBOUNCE_MS. Transient EMI/bounce pulses are
+// counted in a0_transient_count and never reset the MCU.
+//
+// The flag, the timestamp and the pin sample are taken inside a short critical
+// section: ctrl_reset_time is a 4-byte value rewritten by the ISR, and a torn
+// read would make the subtraction wrap and fire the deadline early (a false A0
+// reset). mc_reset() runs outside the section.
 void system_check_control_reset_debounce()
 {
-  if (ctrl_reset_pending) {
-    unsigned long now = llp_transport_get_ms();
-    if (now - ctrl_reset_time >= CONTROL_RESET_DEBOUNCE_MS) {
-      ctrl_reset_pending = 0;
-      if (bit_istrue(system_control_get_state(), CONTROL_PIN_INDEX_RESET)) {
-        system_set_reset_source(RESET_SRC_A0);
-        mc_reset();  // Pin still LOW after debounce → confirmed reset
-      }
-    }
+  if (!ctrl_reset_pending) { return; }
+
+  uint8_t sreg = SREG;
+  cli();
+  uint8_t pending = ctrl_reset_pending;
+  unsigned long armed_at = ctrl_reset_time;
+  unsigned long now = llp_transport_get_ms();
+  uint8_t pin_state = system_control_get_state();
+  SREG = sreg;
+
+  // pending == 0 means the ISR already saw the pin released (EMI pulse or
+  // contact bounce filtered), so there is nothing to confirm.
+  if (!pending || (now - armed_at) < CONTROL_RESET_DEBOUNCE_MS) { return; }
+
+  ctrl_reset_pending = 0;
+  if (bit_istrue(pin_state, CONTROL_PIN_INDEX_RESET)) {
+    system_set_reset_source(RESET_SRC_A0);
+    mc_reset();  // Pin still LOW after debounce → confirmed reset
   }
 }
 

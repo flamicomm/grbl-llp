@@ -227,8 +227,6 @@ void protocol_execute_realtime()
   protocol_exec_rt_system();
   if (sys.suspend) { protocol_exec_rt_suspend(); }
 
-  system_check_control_reset_debounce();  // Software debounce for A0 reset pin
-
   #ifdef DEBUG_KEEPALIVE
   {
     static unsigned long last_dbg_ka = 0;
@@ -277,6 +275,11 @@ void protocol_execute_realtime()
 // NOTE: Do not alter this unless you know exactly what you are doing!
 void protocol_exec_rt_system()
 {
+  // Software debounce for A0 reset pin. Lives here (and not in
+  // protocol_execute_realtime) so it also runs inside the suspend loop
+  // (feed hold, safety door, sleep), where only this function is called.
+  system_check_control_reset_debounce();
+
   uint8_t rt_exec; // Temp variable to avoid calling volatile multiple times.
   rt_exec = sys_rt_exec_alarm; // Copy volatile sys_rt_exec_alarm.
   if (rt_exec) { // Enter only if any bit flag is true

@@ -29,7 +29,7 @@ ejecuta startup lines y llama a `protocol_main_loop()` (`src/main.c:119`).
 | `TIMER2_OVF_vect` | `src/llp_transport.c:55` | contador de ms de LLP |
 | `LIMIT_INT_vect` | `src/limits.c:110` | pin-change de límites (hard limits) |
 | `WDT_vect` | `src/limits.c:135` | watchdog (uso interno de Grbl) |
-| `CONTROL_INT_vect` | `src/system.c:86` | pin-change de control (reset/cycle/feed hold) |
+| `CONTROL_INT_vect` | `src/system.c:118` | pin-change de control (reset/cycle/feed hold) |
 
 **Timer0, Timer1 y Timer2 están ocupados.** No agregues ISRs ni reconfigures prescalers
 sin revisar el impacto en step timing o en el contador de ms de LLP.
@@ -42,10 +42,11 @@ sin revisar el impacto en step timing o en el contador de ms de LLP.
 | `CHECK_LIMITS_AT_INIT` | deshabilitado (sin switches) | `230` |
 | `REPORT_FIELD_*` | deshabilitados, salvo `LINE_NUMBERS` | `269-274` |
 | `ENABLE_BUILD_INFO_WRITE_COMMAND` | deshabilitado (`$I=` no existe) | `520` |
-| `DEBUG_KEEPALIVE` | deshabilitado | `705` |
-| `CONTROL_RESET_DEBOUNCE_MS` | `20` ms | `710` |
-| `LLP_MAX_PAYLOAD` | `64` | `713` |
-| `LLP_ENABLE_STATS` | `0` (stats de parser fuera) | `714` |
+| `DEBUG_KEEPALIVE` | habilitado (diagnóstico de campo) | `707` |
+| `CONTROL_RESET_DEBOUNCE_MS` | `100` ms | `713` |
+| `DISABLE_CONTROL_RESET_PIN` | deshabilitado (A0 activo) | `730` |
+| `LLP_MAX_PAYLOAD` | `64` | `723` |
+| `LLP_ENABLE_STATS` | `0` (stats de parser fuera) | `724` |
 
 Los números de línea de esta tabla son volátiles: confírmalos con
 `grep -n "<FLAG>" src/config.h` antes de citarlos en otro sitio.

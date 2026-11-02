@@ -124,6 +124,7 @@ uint8_t limits_get_state()
             system_set_exec_alarm(EXEC_ALARM_HARD_LIMIT); // Indicate hard limit critical event
           }
         #else
+          system_set_reset_source(RESET_SRC_HARD_LIMIT);
           mc_reset(); // Initiate system kill.
           system_set_exec_alarm(EXEC_ALARM_HARD_LIMIT); // Indicate hard limit critical event
         #endif
