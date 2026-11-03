@@ -75,6 +75,7 @@ Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `REA
 | Frames LLP perdidos (`td:`/`rd:` crecen) | Buffer chico o flush descartando | `#` + `doc/buffers.md` |
 | `[MSG:RST:SFR]` + `[MSG:RST:SRC:LLP]` | Byte `0x18` (reset) en un frame LLP | revisar ruido UART / comando de emergencia |
 | `[MSG:RST:SFR]` + `[MSG:RST:SRC:A0]` | Pin A0 disparado por EMI (sin botón) | pull-up 10k + 100nF en A0, o desconectar A0 |
+| `[MSG:BOOT:n=...]` tras reiniciarse | Reset de CPU; optiboot limpia `MCUSR`, por eso igual dice `SFR` | comparar `up=` con el último `[DBG:t=...]` (cuelgue vs reset inmediato) |
 | `[MSG:RST:SRC:HARD_LIMIT/SOFT_LIMIT]` | Alarma de límites | revisar recorrido / `$20`/`$21` |
 | `[DBG:... sp=...]` con `sp` muy bajo | Stack profundo | revisar buffers/stack (`doc/buffers.md`) |
 | `[DBG:... ca=...]` creciendo durante un corte | EMI en A0 (pulsos filtrados por el debounce) | pull-up 10 k + 100 nF, desconectar A0 o `DISABLE_CONTROL_RESET_PIN` |

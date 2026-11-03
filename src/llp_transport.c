@@ -193,7 +193,10 @@ void llp_transport_tx_byte(uint8_t byte)
         llp_tx_line_buf[llp_tx_line_idx++] = byte;
     }
 
-    if (byte == '\n' || llp_tx_line_idx >= LLP_TX_LINE_BUF_SIZE) {
+    // Flush on newline or when the chunk reaches LLP_TX_CHUNK_SIZE. Flushing at
+    // the full line-buffer size (or at LLP_MAX_PAYLOAD) overflows the payload
+    // once the layer byte is prepended and drops the whole frame.
+    if (byte == '\n' || llp_tx_line_idx >= LLP_TX_CHUNK_SIZE) {
         llp_transport_tx_flush();
     }
 }

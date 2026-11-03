@@ -49,23 +49,65 @@ alarmas.
   cada 1000 ms, implementado con el contador de ms de LLP (`llp_transport_get_ms()`).
 - El host debe sondear con `?` o `#`. Si no hay respuesta, el MCU está colgado.
 - El keep-alive de depuración (`DEBUG_KEEPALIVE`) está **habilitado** en
-  `src/config.h` para diagnóstico de campo. Imprime cada 10 s:
-  `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=... re=... rt=... rd=... td=... ca=...]`.
-  - `sp` muy bajo → stack profundo / riesgo de desborde.
+  `src/config.h` para diagnóstico de campo. Imprime cada 10 s, en **tres líneas**:
+  ```
+  [DBG:t=... s=... sp=... bf=...]
+  [DBG:tx=... rx=... u=... re=... rt=...]
+  [DBG:rd=... td=... ca=...]
+  ```
+  - `t` = uptime en ms de LLP; `s` = `sys.state`; `sp` = puntero de stack en el
+    momento de imprimir; `bf` = bloques libres del planner.
   - `tx`/`rx` saturados → cuello de botella serial.
-  - `bf=0` → planner lleno (normal en streaming).
   - `u` = `UCSR0B` (bit `UDRIE0` indica TX pendiente).
   - `re`/`rt`/`rd`/`td` = errores, timeouts, drops RX y drops TX de LLP.
   - `ca` = pulsos en A0 (reset/abort) descartados por el debounce. Si crece
     durante un corte, hay EMI en ese pin aunque no llegue a reiniciar el MCU.
-    Satura en 255 y sobrevive a los soft resets (no se reinicializa en RAM).
+  - **Importante:** cada línea impresa tiene que entrar en una sola trama LLP.
+    `llp_transport_tx_byte()` corta en `LLP_TX_CHUNK_SIZE` (`LLP_MAX_PAYLOAD - 1`,
+    o sea 63 bytes con el default 64) porque `llp_build_final_payload()` antepone
+    el byte de layer. Una línea más larga se parte en varias tramas y, si el chunk
+    llegara a `LLP_MAX_PAYLOAD`, la cabecera se descarta en silencio. Mantené las
+    líneas de debug por debajo de ~60 caracteres.
   El costo en flash depende del build: medilo con `avr-size` antes de afirmar
   que entra. En el Nano el margen es mínimo: si no entra, deshabilitarlo con
   `// #define DEBUG_KEEPALIVE`.
 
-## 4b. Reset del MCU: `[MSG:RST:...]`
+## 4b. Reset del MCU: `[MSG:RST:...]` y `[MSG:BOOT:...]`
 
-Al reinicializar, `main.c` reporta la causa leyendo `MCUSR`:
+**El bootloader de Arduino (optiboot) lee y limpia `MCUSR` antes de saltar al
+sketch** (`optiboot.c`: `ch = MCUSR; MCUSR = 0;`). Consecuencia: en un Uno/Nano
+con optiboot el sketch **siempre** lee `MCUSR == 0` y reporta `SFR`, incluso en un
+brown-out o un reset externo. Los mensajes `BOR/EXT/WDR/POR` son inalcanzables en
+esas placas; no sirven para diagnosticar.
+
+Por eso el firmware mantiene diagnóstico en `.noinit` (no lo inicializa `crt0`,
+así que sobrevive a un reset de CPU, no a un corte de alimentación). En cada
+reinicio de CPU imprime, antes del banner de Grbl:
+
+```
+[MSG:BOOT:n=12 m=ok up=1234567]
+[MSG:BOOT:src=NONE ca=0]
+```
+
+| Campo | Significado |
+|---|---|
+| `n` | Reinicios desde el último encendido (1 en un arranque en frío) |
+| `m` | `ok` = la RAM se conservó (fue un reset, no un power-on); `wipe` = arranque en frío |
+| `up` | Uptime (ms) del **último pasaje del main loop** de la vida anterior |
+| `src` | Último origen anotado (`NONE` si nadie llamó a `mc_reset()` antes del reset) |
+| `ca` | Pulsos de A0 filtrados, preservados entre resets |
+
+Cómo leerlo:
+
+- **`[MSG:BOOT]` presente** ⇒ hubo un reset de CPU (crt0 volvió a correr). Si `m=ok`,
+  la RAM sobrevivió (brown-out, reset externo, watchdog o salto al vector).
+- **`[MSG:BOOT]` ausente** y `[MSG:RST:SRC:X]` presente ⇒ fue un re-init en el lugar
+  (soft reset de Grbl), `X` nombra al que llamó a `mc_reset()`.
+- `up` muy anterior al último `[DBG:t=...]` visto por el host ⇒ el main loop dejó de
+  correr antes del reset (cuelgue). `up` ≈ el último `t` ⇒ el reset fue inmediato.
+
+Causa reportada por `MCUSR` (sólo útil si el bootloader **no** limpia `MCUSR`, p.
+ej. con un bootloader propio):
 
 | Mensaje | Significado |
 |---|---|
@@ -73,9 +115,9 @@ Al reinicializar, `main.c` reporta la causa leyendo `MCUSR`:
 | `[MSG:RST:EXT]` | Reset externo (pin RESET / botón) |
 | `[MSG:RST:WDR]` | Watchdog |
 | `[MSG:RST:POR]` | Power-on |
-| `[MSG:RST:SFR]` | **Soft reset** (software) |
+| `[MSG:RST:SFR]` | **Soft reset** (software) o reset con `MCUSR` ya limpio |
 
-Cuando es `SFR`, se agrega el origen:
+Cuando la causa es `SFR`, se agrega el origen que anotó el que llamó a `mc_reset()`:
 
 | `[MSG:RST:SRC:...]` | Origen |
 |---|---|

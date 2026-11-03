@@ -22,14 +22,77 @@
 
 
 // Volatile because it is written from ISR context (A0 pin) and read from
-// the main loop / reset handler.
-volatile uint8_t last_reset_source = RESET_SRC_NONE;
+// the main loop / reset handler. Kept in .noinit so it survives a hardware
+// reset (crt0 does not initialize .noinit); system_diag_boot_init() clears it
+// on a cold start.
+volatile uint8_t last_reset_source __attribute__((section(".noinit")));
 
 // A0 (reset/abort) pulses that were filtered out by the debounce. A growing
 // value during a job means EMI on that pin; it is reported as "ca=" in the
 // DEBUG_KEEPALIVE line. Saturates instead of wrapping so it stays monotonic,
-// and the increment is a single byte write, which is atomic on AVR.
-volatile uint8_t a0_transient_count = 0;
+// and the increment is a single byte write, which is atomic on AVR. In
+// .noinit so the count stays meaningful across a reset.
+volatile uint8_t a0_transient_count __attribute__((section(".noinit")));
+
+// ---------------------------------------------------------------------------
+// Boot diagnostics that must survive a hardware reset.
+//
+// A real reset (brown-out, external reset, watchdog, or a jump back to the
+// reset vector) re-runs crt0, which zeroes .bss and reloads .data. Variables in
+// .noinit keep their RAM contents, so they are the only way to learn what the
+// previous life was doing when the MCU restarted. The magic distinguishes a
+// preserved block from the random contents left by a power-on.
+//
+// Note: the Arduino Uno bootloader (optiboot) reads and clears MCUSR before
+// jumping to the sketch, so the sketch always sees MCUSR == 0 and reports
+// "SFR"; these counters are what actually identify a hardware restart.
+// ---------------------------------------------------------------------------
+#define DIAG_MAGIC 0xB007u
+
+static volatile unsigned long diag_last_loop_ms __attribute__((section(".noinit")));
+static volatile uint16_t diag_magic __attribute__((section(".noinit")));
+static volatile uint16_t diag_boot_count __attribute__((section(".noinit")));
+
+// Returns 1 when the previous life's RAM was preserved (so this was a reset,
+// not a power-on), 0 on a cold start.
+uint8_t system_diag_boot_init(void)
+{
+  uint8_t preserved = 0;
+
+  if (diag_magic == DIAG_MAGIC) {
+    preserved = 1;
+    if (diag_boot_count < 0xFFFF) { diag_boot_count++; }
+  } else {
+    diag_magic = DIAG_MAGIC;
+    diag_boot_count = 1;
+    diag_last_loop_ms = 0;
+  }
+
+  if (!preserved) {
+    // Cold start: .noinit contents are undefined, do not trust them.
+    last_reset_source = RESET_SRC_NONE;
+    a0_transient_count = 0;
+  }
+
+  return preserved;
+}
+
+// Records the uptime of the last main-loop pass. Survives resets, so the next
+// boot can tell whether the loop was alive until the end or had been dead.
+void system_diag_mark_loop(unsigned long now)
+{
+  diag_last_loop_ms = now;
+}
+
+uint16_t system_diag_boot_count(void)
+{
+  return diag_boot_count;
+}
+
+unsigned long system_diag_last_loop_ms(void)
+{
+  return diag_last_loop_ms;
+}
 
 void system_set_reset_source(uint8_t src)
 {

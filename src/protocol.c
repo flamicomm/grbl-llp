@@ -231,22 +231,29 @@ void protocol_execute_realtime()
   {
     static unsigned long last_dbg_ka = 0;
     unsigned long now = llp_transport_get_ms();
+    // Keep a liveness timestamp in .noinit so a reset report can tell whether
+    // the main loop was running until the very end (abrupt reset) or had been
+    // dead for a while (hang).
+    system_diag_mark_loop(now);
     if (now - last_dbg_ka >= 10000) {
       last_dbg_ka = now;
+      // Split over three lines on purpose: one output line must fit in a
+      // single LLP frame (LLP_TX_CHUNK_SIZE bytes). A longer line is chunked
+      // and its head was silently discarded when the chunk overflowed the
+      // payload limit.
       printPgmString(PSTR("[DBG:t="));
       printInteger((long)now);
-      printPgmString(PSTR(" st="));
+      printPgmString(PSTR(" s="));
       print_uint8_base10(sys.state);
-      printPgmString(PSTR(" tx="));
+      printPgmString(PSTR(" sp="));
+      print_uint32_base10(SP);
+      printPgmString(PSTR(" bf="));
+      print_uint8_base10(plan_get_block_buffer_available());
+      printPgmString(PSTR("]\r\n"));
+      printPgmString(PSTR("[DBG:tx="));
       print_uint8_base10(serial_get_tx_buffer_count());
       printPgmString(PSTR(" rx="));
       print_uint8_base10(serial_get_rx_buffer_available());
-      printPgmString(PSTR(" bf="));
-      print_uint8_base10(plan_get_block_buffer_available());
-      printPgmString(PSTR(" li="));
-      print_uint8_base10(llp_transport_get_tx_line_idx());
-      printPgmString(PSTR(" sp="));
-      print_uint32_base10(SP);
       printPgmString(PSTR(" u="));
       print_uint8_base10(UCSR0B);
       {
@@ -256,14 +263,15 @@ void protocol_execute_realtime()
         printInteger(stats.rx_errors);
         printPgmString(PSTR(" rt="));
         printInteger(stats.rx_timeouts);
-        printPgmString(PSTR(" rd="));
+        printPgmString(PSTR("]\r\n"));
+        printPgmString(PSTR("[DBG:rd="));
         printInteger(stats.rx_dropped);
         printPgmString(PSTR(" td="));
         printInteger(stats.tx_dropped);
         printPgmString(PSTR(" ca="));
         print_uint8_base10(a0_transient_count);
+        printPgmString(PSTR("]\r\n"));
       }
-      printPgmString(PSTR("]\r\n"));
     }
   }
   #endif

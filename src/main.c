@@ -37,11 +37,36 @@ volatile uint8_t last_mcusr; // Saved MCUSR register for reset cause diagnostics
 #endif
 
 
+// Prints the caller of the last soft reset (RESET_SRC_*). Shared by the
+// [MSG:RST:SRC:...] line and the [MSG:BOOT:src=...] line.
+static void print_reset_source(uint8_t src)
+{
+  switch (src) {
+    case RESET_SRC_LLP:        printPgmString(PSTR("LLP")); break;
+    case RESET_SRC_A0:         printPgmString(PSTR("A0")); break;
+    case RESET_SRC_RST:        printPgmString(PSTR("RST")); break;
+    case RESET_SRC_HARD_LIMIT: printPgmString(PSTR("HARD_LIMIT")); break;
+    case RESET_SRC_SOFT_LIMIT: printPgmString(PSTR("SOFT_LIMIT")); break;
+    case RESET_SRC_HOMING:     printPgmString(PSTR("HOMING")); break;
+    case RESET_SRC_OTHER:      printPgmString(PSTR("OTHER")); break;
+    default:                   printPgmString(PSTR("NONE")); break;
+  }
+}
+
+
 int main(void)
 {
   // Save MCU reset cause before anything clears MCUSR, then clear it for next event.
+  // NOTE: the Arduino Uno bootloader (optiboot) reads and clears MCUSR before
+  // jumping to the sketch, so on a stock Uno this is always 0 and every reset
+  // reads as "SFR". The .noinit counters reported as [MSG:BOOT:...] are the
+  // reliable signal on those boards.
   last_mcusr = MCUSR;
   MCUSR = 0;
+
+  // Restore the diagnostics that survived the reset (see system.c). Returns 1
+  // when RAM was preserved, i.e. this restart was not a power-on.
+  uint8_t ram_preserved = system_diag_boot_init();
 
   // Initialize system upon power-up.
   serial_init();   // Setup serial baud rate and interrupts
@@ -70,6 +95,24 @@ int main(void)
   #ifdef HOMING_INIT_LOCK
     if (bit_istrue(settings.flags,BITFLAG_HOMING_ENABLE)) { sys.state = STATE_ALARM; }
   #endif
+
+  // Report what survived the reset. Printed once per CPU reset: a soft reset
+  // only re-runs the for(;;) loop below and reports itself with [MSG:RST:...].
+  //   n   = restarts since the last power-on (1 on a cold start)
+  //   m   = "ok" when RAM was preserved (not a power-on), "wipe" otherwise
+  //   up  = uptime of the last main-loop pass of the previous life (ms)
+  printPgmString(PSTR("[MSG:BOOT:n="));
+  print_uint32_base10(system_diag_boot_count());
+  printPgmString(PSTR(" m="));
+  printPgmString(ram_preserved ? PSTR("ok") : PSTR("wipe"));
+  printPgmString(PSTR(" up="));
+  print_uint32_base10(system_diag_last_loop_ms());
+  printPgmString(PSTR("]\r\n"));
+  printPgmString(PSTR("[MSG:BOOT:src="));
+  print_reset_source(last_reset_source);
+  printPgmString(PSTR(" ca="));
+  print_uint8_base10(a0_transient_count);
+  printPgmString(PSTR("]\r\n"));
 
   // Grbl initialization loop upon power-up or a system abort. For the latter, all processes
   // will return to this loop to be cleanly re-initialized.
@@ -117,16 +160,7 @@ int main(void)
       // Only a bare soft reset needs a source annotation. Hardware resets
       // (BOR/EXT/WDR/POR) are already self-explanatory.
       printPgmString(PSTR("[MSG:RST:SRC:"));
-      switch (last_reset_source) {
-        case RESET_SRC_LLP:        printPgmString(PSTR("LLP")); break;
-        case RESET_SRC_A0:         printPgmString(PSTR("A0")); break;
-        case RESET_SRC_RST:        printPgmString(PSTR("RST")); break;
-        case RESET_SRC_HARD_LIMIT: printPgmString(PSTR("HARD_LIMIT")); break;
-        case RESET_SRC_SOFT_LIMIT: printPgmString(PSTR("SOFT_LIMIT")); break;
-        case RESET_SRC_HOMING:     printPgmString(PSTR("HOMING")); break;
-        case RESET_SRC_OTHER:      printPgmString(PSTR("OTHER")); break;
-        default:                   printPgmString(PSTR("NONE")); break;
-      }
+      print_reset_source(last_reset_source);
       printPgmString(PSTR("]\r\n"));
     }
     last_mcusr = 0;

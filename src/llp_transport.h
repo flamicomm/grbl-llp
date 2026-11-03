@@ -25,6 +25,15 @@
 
 #define LLP_TX_LINE_BUF_SIZE  64
 
+// A line is flushed to a frame every LLP_TX_CHUNK_SIZE bytes. This must stay
+// below LLP_MAX_PAYLOAD: llp_build_final_payload() prepends the layer byte, so
+// a chunk of LLP_MAX_PAYLOAD bytes would need LLP_MAX_PAYLOAD + 1 and the frame
+// would be silently discarded (the head of every long line would vanish).
+#define LLP_TX_CHUNK_SIZE     (LLP_MAX_PAYLOAD - 1)
+
+// The line buffer must be able to hold a full chunk before the flush happens.
+typedef char llp_tx_chunk_fits_line_buf[(LLP_TX_LINE_BUF_SIZE >= LLP_TX_CHUNK_SIZE) ? 1 : -1];
+
 void llp_transport_init(void);
 void llp_transport_rx_byte(uint8_t byte);
 void llp_transport_tx_byte(uint8_t byte);

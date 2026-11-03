@@ -182,6 +182,14 @@ extern volatile uint8_t last_reset_source;
 extern volatile uint8_t a0_transient_count;
 void system_set_reset_source(uint8_t src);
 
+// Boot diagnostics kept in .noinit (survive hardware resets). Call
+// system_diag_boot_init() once at the very start of main(): it returns 1 when
+// the previous life's RAM was preserved (reset, not power-on).
+uint8_t system_diag_boot_init(void);
+void system_diag_mark_loop(unsigned long now);
+uint16_t system_diag_boot_count(void);
+unsigned long system_diag_last_loop_ms(void);
+
 // Initialize the serial protocol
 void system_init();
 
