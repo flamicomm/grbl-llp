@@ -13,23 +13,26 @@ La comunicación serial entre Arduino y PC via USB/UART es **inestable**. Se pro
 - Pérdida de posición del equipo
 - Respuestas "ok" que nunca llegan o se corrompen
 
-## La Solución: Protocolo LLP v3
+## La Solución: Protocolo LLP v4
 
-LLP (Layered Link Protocol) v3.1.0 es un protocolo binario de transporte que garantiza integridad de datos sobre UART:
+LLP (Lightweight Link Protocol) v4.0.0 es un protocolo binario de transporte que garantiza integridad de datos sobre UART:
 
 - **Tramas binarias con CRC16-CCITT**: Checksum por frame (no por byte)
 - **Bytes de sincronización**: Secuencia `0xAA 0x55` para resync
-- **Longitud explícita** (2 bytes, little-endian)
-- **Byte stuffing**: `0xAA` en payload se escapa como `0xAA 0x00`
-- **Timeout inter-byte**: 2000ms sin datos → parser resetea
-- **Layer chain**: Payload `0x00` indica FinalNode (datos raw)
-- **Zero-copy RX**: `llp_get_final_payload_ptr()` lee directo del buffer del parser
+- **Header fijo de 6 bytes**: longitud (1 B) y canal (1 B)
+- **Byte stuffing**: `0xAA` en el resto de la trama se escapa como `0xAA 0x00`
+- **Timeout inter-byte**: 2000 ms sin datos → parser resetea
+- **Parser con buffer externo**: el payload se escribe directo en RAM del consumidor
 
-### Formato de trama LLP v3.1.0
+### Formato de trama LLP v4.0.0
 
 ```
-[0xAA][0x55][LEN_L][LEN_H][PAYLOAD...][CRC_L][CRC_H]
+[0xAA][0x55][LEN][CHANNEL][PAYLOAD...][CRC_L][CRC_H]
 ```
+
+`CRC16-CCITT` cubre `MAGIC + LEN + CHANNEL + PAYLOAD` y va little-endian.
+La especificación completa vive en el repo `llp-protocol`
+(`docs/SPEC-v4.md`); el header vendorizado es `src/llp_v4.h`.
 
 ### Keep-alive
 
@@ -49,7 +52,7 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 
 | Aspecto | Grbl estándar | grbl-llp |
 |---|---|---|
-| Protocolo de transporte | Texto plano (`\n` terminador) | LLP v3 binario con CRC16 |
+| Protocolo de transporte | Texto plano (`\n` terminador) | LLP v4 binario con CRC16 |
 | Keep-alive | No disponible | Eliminado del main loop; solo `[KA] ALARM` |
 | Buffer query | No disponible | `#` → `buf:N rx:N ...` |
 | Control de spindle | PWM/hardware | **Deshabilitado** (manual 12V) |
@@ -66,8 +69,8 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 
 | Archivo | Cambio |
 |---|---|
-| `src/llp_transport.c` / `src/llp_transport.h` | Recepción, TX flush non-blocking, stats, Timer2 ms counter |
-| `src/llp_protocol.h` | Parser de frames LLP v3 (single-header, layer chain) |
+| `src/llp_transport.c` / `src/llp_transport.h` | RX por ISR al parser v4, TX en streaming al ring (sin frame buffer), stats, Timer2 ms counter |
+| `src/llp_v4.h` | Framing LLP v4.0.0 (single-header, parser + encoder en streaming) |
 | `src/serial.c` / `src/serial.h` | `volatile` en buffer heads, integración LLP con ISR serial |
 | `src/protocol.c` | Keep-alive eliminado del main loop; `[KA] ALARM` preservado en alarm loop; comando `#` con LLP stats |
 | `src/spindle_control.c` | Stubs vacíos (no spindle I/O) |
@@ -144,7 +147,7 @@ python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /
 | Script | Descripción |
 |---|---|
 | `scripts/stream_gcode.py` | Streaming G-code real vía LLP |
-| `scripts/llp.py` | Librería LLP v3 (encode/decode/parser) |
+| `scripts/llp.py` | Librería LLP v4 (encode/decode/parser) |
 | `test_short.gcode` | G-code corto para pruebas rápidas |
 | `test_large.gcode` | G-code real de PCB (FlatCAM, ~5000 líneas) |
 
@@ -240,7 +243,7 @@ se conserva entre resets (vive en `.noinit`). Detalle y mitigaciones en
 
 MIT — See [LICENSE](LICENSE)
 
-LLP Specification v3.1.0 — Copyright © 2026 Flamingo Communications
+LLP Specification v4.0.0 — Copyright © 2026 Flamingo Communications
 
 ## Créditos
 

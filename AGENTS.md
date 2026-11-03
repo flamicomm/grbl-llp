@@ -32,7 +32,7 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
   No cites porcentajes de memoria: cambian con cada commit; da el comando.
 - **Timer2 está tomado** por el contador de ms de LLP (`src/llp_transport.c`). No lo reuses.
 - **Buffers:** no cambies tamaños sin leer `doc/buffers.md` (hay dependencias entre
-  `LINE_BUFFER_SIZE`, `LLP_MAX_PAYLOAD` y `TX_BUFFER_SIZE`).
+  `LINE_BUFFER_SIZE`, `LLP_RX_PAYLOAD_SIZE` y `TX_BUFFER_SIZE`).
 - **Sin spindle ni coolant:** `spindle_control.c` y `coolant_control.c` son stubs.
 - **Firmware del ESP8266 (fuera de este repo):** nunca uses `Serial.print()`; ese UART
   está permanentemente conectado al Arduino.
@@ -40,8 +40,8 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 ## Arquitectura (3 capas)
 
 1. ESP8266 en modo transparente sobre `/dev/ttyUSB0` ↔ UART 115200 con frames LLP.
-2. `src/llp_transport.c` (bytes, Timer2, flush no bloqueante) + `src/llp_protocol.h`
-   (framing, CRC16, layer chain, byte stuffing).
+2. `src/llp_transport.c` (bytes, Timer2, flush no bloqueante) + `src/llp_v4.h`
+   (framing v4.0.0, CRC16, canal, byte stuffing).
 3. `src/serial.c` adapta las ISR UART a LLP; `src/protocol.c` consume líneas desframadas.
 
 Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `README.md`.

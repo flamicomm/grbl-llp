@@ -719,9 +719,9 @@
 // reset. Feed hold (A1) and cycle start (A2) keep working.
 // #define DISABLE_CONTROL_RESET_PIN
 
-// LLP transport overrides (must be defined before llp_protocol.h is included)
-#define LLP_MAX_PAYLOAD 64
-#define LLP_ENABLE_STATS 0
+// LLP transport configuration lives in src/llp_transport.h (line buffer,
+// payload capacity, timeout) and src/llp_v4.h (library defaults). Nothing to
+// override here.
 
 // Paste CPU_MAP definitions here.
 

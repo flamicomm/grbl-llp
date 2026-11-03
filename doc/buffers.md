@@ -12,9 +12,9 @@ documento no es la fuente de verdad**, es el mapa. Verifica siempre con `grep`.
 | `LINE_BUFFER_SIZE` | `src/protocol.h:32` | 48 | línea G-code máxima aceptada |
 | `LLP_TX_LINE_BUF_SIZE` | `src/llp_transport.h:26` | 48 | búfer de línea antes de framear (igual a `LINE_BUFFER_SIZE`) |
 | `TX_RING_BUFFER` | `src/serial.h:40` | 129 | 128 usables; la trama se emite directo acá (sin `frame_buf`) |
-| `LLP_MAX_PAYLOAD` | `src/config.h:713` | 64 | payload máximo por frame LLP |
+| `LLP_RX_PAYLOAD_SIZE` | `src/llp_transport.h` | 64 | payload máximo aceptado por el parser v4 |
 | `BLOCK_BUFFER_SIZE` | `src/planner.h:29` y `:31` | 8 | bloques del planificador (bajado de 12, ver "Stack") |
-| `LLP_FRAME_TIMEOUT_MS` | `src/llp_protocol.h:55` | 2000 | timeout inter-byte del parser |
+| `LLP_RX_TIMEOUT_MS` | `src/llp_transport.h` | 2000 | timeout inter-byte del parser |
 
 ## Trampa: `src/config.h` miente por diseño
 
@@ -27,12 +27,14 @@ valores por defecto de otra época:
 #define LLP_FRAME_TIMEOUT_MS 2000 ← dentro de /* */
 ```
 
+(`LLP_MAX_PAYLOAD` y `LLP_FRAME_TIMEOUT_MS` eran de la librería v3: en v4 la
+capacidad la fija `LLP_RX_PAYLOAD_SIZE` en `src/llp_transport.h`.)
+
 Ninguna de esas líneas compila. La definición activa puede estar en:
 
-- `sed -n '700,716p' src/config.h` → overrides reales (`LLP_MAX_PAYLOAD 64`,
-  `LLP_ENABLE_STATS 0`)
-- `src/planner.h`, `src/serial.h`, `src/protocol.h`, `src/llp_protocol.h` → defaults
-  con `#ifndef`
+- `src/llp_transport.h` → configuración del transporte v4 (payload, línea, timeout)
+- `src/llp_v4.h` → defaults de la librería (`LLP4_DEFAULT_TIMEOUT_MS`, etc.)
+- `src/planner.h`, `src/serial.h`, `src/protocol.h` → defaults con `#ifndef`
 
 Regla: **nunca cites una línea de `config.h` sin comprobar que no está dentro del
 bloque de comentario.**
@@ -40,7 +42,7 @@ bloque de comentario.**
 ## Cómo verificar
 
 ```bash
-grep -rn "define .*BUFFER_SIZE\|define LLP_MAX_PAYLOAD\|define LLP_FRAME_TIMEOUT_MS" src/
+grep -rn "define .*BUFFER_SIZE\|define LLP_RX_PAYLOAD_SIZE\|define LLP_RX_TIMEOUT_MS" src/
 ```
 
 Y para el consumo real:
@@ -60,7 +62,7 @@ Y para el consumo real:
 
 ## Dependencias al cambiar tamaños
 
-1. `LINE_BUFFER_SIZE` debe caber en `LLP_MAX_PAYLOAD` (la línea viaja como payload).
+1. `LINE_BUFFER_SIZE` debe caber en `LLP_RX_PAYLOAD_SIZE` (la línea viaja como payload del frame).
 2. `LLP_TX_LINE_BUF_SIZE` debe poder contener la respuesta más larga antes de framear
    y, junto con el resto de la trama, entrar completa en `TX_RING_BUFFER`: el
    emisor reserva el peor caso antes de escribir (todo o nada), y hay un
@@ -107,5 +109,5 @@ Si `pk` se acerca a `lim`, el `.noinit` va a volver a corromperse: liberá RAM
 
 `#` imprime contadores de **transporte** (`llp_transport_get_stats()`), que están
 siempre activos. Los contadores del **parser** están compilados fuera:
-`LLP_ENABLE_STATS` vale `0` en `src/config.h:714`, así que no se acumulan salvo que
-lo habilites (cuesta ~12 B de RAM por parser).
+En v4 el parser no tiene contadores de parser: los del transporte
+(`llp_transport.c`) están siempre activos y se consultan con `llp_transport_get_stats()`.

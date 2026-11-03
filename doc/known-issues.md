@@ -62,12 +62,11 @@ alarmas.
   - `re`/`rt`/`rd`/`td` = errores, timeouts, drops RX y drops TX de LLP.
   - `ca` = pulsos en A0 (reset/abort) descartados por el debounce. Si crece
     durante un corte, hay EMI en ese pin aunque no llegue a reiniciar el MCU.
-  - **Importante:** cada línea impresa tiene que entrar en una sola trama LLP.
-    `llp_transport_tx_byte()` corta en `LLP_TX_CHUNK_SIZE` (`LLP_MAX_PAYLOAD - 1`,
-    o sea 63 bytes con el default 64) porque `llp_build_final_payload()` antepone
-    el byte de layer. Una línea más larga se parte en varias tramas y, si el chunk
-    llegara a `LLP_MAX_PAYLOAD`, la cabecera se descarta en silencio. Mantené las
-    líneas de debug por debajo de ~60 caracteres.
+  - **Importante:** cada línea se corta en `LLP_TX_CHUNK_SIZE` (48 bytes, igual a
+    `LLP_TX_LINE_BUF_SIZE`); una línea más larga se parte en varias tramas. La trama
+    completa (peor caso `10 + 2n`) tiene que entrar en el ring de TX y hay un chequeo
+    en compilación. Mantené el debug por debajo de ~45 caracteres para que cada
+    mensaje salga en una sola trama.
   El costo en flash depende del build: medilo con `avr-size` antes de afirmar
   que entra. En el Nano el margen es mínimo: si no entra, deshabilitarlo con
   `// #define DEBUG_KEEPALIVE`.

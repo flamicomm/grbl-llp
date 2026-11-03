@@ -45,8 +45,9 @@ sin revisar el impacto en step timing o en el contador de ms de LLP.
 | `DEBUG_KEEPALIVE` | habilitado (diagnóstico de campo) | `707` |
 | `CONTROL_RESET_DEBOUNCE_MS` | `100` ms | `713` |
 | `DISABLE_CONTROL_RESET_PIN` | deshabilitado (A0 activo) | `730` |
-| `LLP_MAX_PAYLOAD` | `64` | `723` |
-| `LLP_ENABLE_STATS` | `0` (stats de parser fuera) | `724` |
+| `LLP_RX_PAYLOAD_SIZE` | `64` (capacidad del parser v4) | `src/llp_transport.h` |
+| `LLP_TX_LINE_BUF_SIZE` | `48` (una línea = una trama) | `src/llp_transport.h` |
+| `LLP_RX_TIMEOUT_MS` | `2000` | `src/llp_transport.h` |
 
 Los números de línea de esta tabla son volátiles: confírmalos con
 `grep -n "<FLAG>" src/config.h` antes de citarlos en otro sitio.
@@ -58,8 +59,8 @@ Los números de línea de esta tabla son volátiles: confírmalos con
 | init | `src/serial.c:86` | `llp_transport_init()` tras configurar UART |
 | TX | `src/serial.c:94` | `serial_write()` delega en `llp_transport_tx_byte()` |
 | RX | `src/serial.c:137` | la ISR delega en `llp_transport_rx_byte()` |
-| stats | `src/llp_transport.c:244` | `llp_transport_get_stats()` |
-| comando `#` | `src/protocol.c:101-114` | imprime `buf/rx/e/t/rd/td` |
+| stats | `src/llp_transport.c:270` | `llp_transport_get_stats()` |
+| comando `#` | `src/protocol.c:101-116` | imprime `buf/rx/e/t/rd/td` |
 
 ## Cuidados en `src/`
 
