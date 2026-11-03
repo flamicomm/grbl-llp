@@ -94,6 +94,45 @@ unsigned long system_diag_last_loop_ms(void)
   return diag_last_loop_ms;
 }
 
+// ---------------------------------------------------------------------------
+// Stack watermark.
+//
+// The free RAM above .data/.bss/.noinit is the stack area, and .noinit sits
+// directly below it: a small overflow silently overwrites the boot diagnostics
+// (that is how the overflow was first noticed). At boot the unused region is
+// painted with a pattern; a later scan finds the first byte the stack touched,
+// which gives the peak usage of the previous life, ISRs included.
+// ---------------------------------------------------------------------------
+#define DIAG_STACK_PATTERN 0x5A
+// Bytes below the current SP that are never painted (headroom for the boot
+// reporting code itself).
+#define DIAG_STACK_GUARD   128u
+
+extern uint8_t _end;  // avr-libc: first byte after .data/.bss/.noinit
+
+// Total bytes available for the stack.
+uint16_t system_diag_stack_limit(void)
+{
+  return (uint16_t)((uint16_t)RAMEND + 1u - (uint16_t)&_end);
+}
+
+// Peak stack usage of the previous life. Must be called before painting (and
+// only when the .noinit magic survived, i.e. the pattern is still valid).
+uint16_t system_diag_stack_peak(void)
+{
+  uint16_t addr = (uint16_t)&_end;
+  uint16_t top = (uint16_t)RAMEND + 1u;
+  while (addr < top && *(const uint8_t *)addr == DIAG_STACK_PATTERN) { addr++; }
+  return (uint16_t)(top - addr);
+}
+
+void system_diag_stack_paint(void)
+{
+  uint16_t stop = (uint16_t)SP - DIAG_STACK_GUARD;
+  uint16_t addr = (uint16_t)&_end;
+  while (addr < stop) { *(uint8_t *)addr = DIAG_STACK_PATTERN; addr++; }
+}
+
 void system_set_reset_source(uint8_t src)
 {
     last_reset_source = src;

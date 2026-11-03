@@ -67,6 +67,10 @@ int main(void)
   // Restore the diagnostics that survived the reset (see system.c). Returns 1
   // when RAM was preserved, i.e. this restart was not a power-on.
   uint8_t ram_preserved = system_diag_boot_init();
+  // Peak stack usage of the previous life, measured on the painted region.
+  // Meaningless after a cold start (the pattern is gone), so report '?'.
+  uint16_t stk_peak = ram_preserved ? system_diag_stack_peak() : 0;
+  system_diag_stack_paint();
 
   // Initialize system upon power-up.
   serial_init();   // Setup serial baud rate and interrupts
@@ -107,6 +111,14 @@ int main(void)
   printPgmString(ram_preserved ? PSTR("ok") : PSTR("wipe"));
   printPgmString(PSTR(" up="));
   print_uint32_base10(system_diag_last_loop_ms());
+  printPgmString(PSTR("]\r\n"));
+  // Peak stack usage vs. the total stack area (bytes). If peak == limit the
+  // stack reached the diagnostics (overflow into .noinit).
+  printPgmString(PSTR("[MSG:BOOT:stk="));
+  if (ram_preserved) { print_uint32_base10(stk_peak); }
+  else { printPgmString(PSTR("?")); }
+  printPgmString(PSTR(" lim="));
+  print_uint32_base10(system_diag_stack_limit());
   printPgmString(PSTR("]\r\n"));
   printPgmString(PSTR("[MSG:BOOT:src="));
   print_reset_source(last_reset_source);

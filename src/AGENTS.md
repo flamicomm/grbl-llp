@@ -72,6 +72,10 @@ Los números de línea de esta tabla son volátiles: confírmalos con
   en `protocol_execute_realtime()`.
 - Cualquier campo nuevo en `sys` o `settings` consume RAM permanente: mide con
   `avr-size` antes de dar el cambio por bueno.
+- **El stack es el recurso más ajustado.** La RAM libre después de `.noinit` es todo
+  lo que hay, y `.noinit` está pegado debajo: un desborde lo corrompe en silencio
+  (ver `doc/buffers.md` → "Stack"). Antes de agregar locales grandes o buffers,
+  mirá `pk=` / `lim=` del keep-alive.
 - **`.noinit` está reservado para diagnóstico de resets** (`src/system.c`:
   `last_reset_source`, `a0_transient_count`, `diag_*`). `system_diag_boot_init()`
   tiene que ser lo primero que corre en `main()`. No metas estado normal ahí.

@@ -190,6 +190,12 @@ void system_diag_mark_loop(unsigned long now);
 uint16_t system_diag_boot_count(void);
 unsigned long system_diag_last_loop_ms(void);
 
+// Stack watermark (see system.c): paint the unused RAM at boot, then scan it to
+// get the peak stack usage of the previous life.
+uint16_t system_diag_stack_limit(void);
+uint16_t system_diag_stack_peak(void);
+void system_diag_stack_paint(void);
+
 // Initialize the serial protocol
 void system_init();
 

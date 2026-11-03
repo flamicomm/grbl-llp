@@ -270,6 +270,9 @@ void protocol_execute_realtime()
         printInteger(stats.tx_dropped);
         printPgmString(PSTR(" ca="));
         print_uint8_base10(a0_transient_count);
+        // Peak stack usage since the last boot (watermark, ISRs included).
+        printPgmString(PSTR(" pk="));
+        print_uint32_base10(system_diag_stack_peak());
         printPgmString(PSTR("]\r\n"));
       }
     }

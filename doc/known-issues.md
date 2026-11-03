@@ -143,6 +143,33 @@ Diagnóstico diferencial: `HARD_LIMIT`, `SOFT_LIMIT` y `HOMING` **no pueden**
 producir `SFR`; entran al bucle `[KA] ALARM` de `protocol_exec_rt_system()` y
 esperan un reset explícito. Un `SFR` sin `[KA] ALARM` previo apunta a A0 o a LLP.
 
+## 4c. Desborde de stack (encontrado en campo)
+
+**Síntoma:** durante un corte, el bloque `.noinit` aparecía corrupto: `ca=` bajaba
+(imposible para un contador que solo incrementa), `last_reset_source` tomaba valores
+espurios (`SRC:LLP` sin que nadie mandara `0x18`), `diag_magic` se perdía y el
+arranque reportaba `m=wipe` como si hubiera sido un corte de alimentación.
+
+**Causa:** el stack desbordaba hacia `.noinit`. Con `BLOCK_BUFFER_SIZE = 12` quedaban
+**323 B** de RAM libre para el stack; la cadena más profunda medía **331 B**. La
+cadena es `gc_execute_line → mc_line → protocol_execute_realtime → 
+protocol_exec_rt_system → report/print`: `mc_line()` espera espacio en el planner
+llamando a `protocol_execute_realtime()` (`src/motion_control.c:61`), y por eso los
+reportes de estado y el `[DBG]` se imprimen justo en el punto más profundo, con un
+ISR de UART apilado encima.
+
+**Consecuencia práctica:** cualquier reset cuyo origen fuera un soft reset de Grbl
+se veía como `SRC:<basura>` y los resets de CPU como `m=wipe`, así que el diagnóstico
+mentía justo en el caso que había que diagnosticar.
+
+**Fix:** `BLOCK_BUFFER_SIZE` 12 → 8 (−184 B) y los arrays de `plan_buffer_line()`
+pasados a `static` (−36 B de stack). Límite actual: **471 B**, pico medido con
+streaming y planner lleno: **331 B**.
+
+**Verificación:** el arranque imprime `[MSG:BOOT:stk=<pico> lim=<total>]` y el
+keep-alive reporta `pk=` en vivo. Si `pk` se acerca a `lim`, hay que liberar RAM antes
+de que vuelva a corromper `.noinit`. Detalle en [`buffers.md`](buffers.md).
+
 ## 5. Subida al Arduino a través del ESP8266
 
 El ESP es un dispositivo permanente en `/dev/ttyUSB0`. Para flashear hay que ponerlo

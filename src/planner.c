@@ -326,8 +326,14 @@ uint8_t plan_buffer_line(float *target, plan_line_data_t *pl_data)
   #endif
 
   // Compute and store initial move distance data.
-  int32_t target_steps[N_AXIS], position_steps[N_AXIS];
-  float unit_vec[N_AXIS], delta_mm;
+  // The three arrays are static to keep this frame small: plan_buffer_line is
+  // called from mc_line, which is part of the deepest call chain, and the free
+  // RAM left for the stack is tight (see doc/buffers.md). Safe: grbl is
+  // single-threaded and no ISR calls this function.
+  static int32_t target_steps[N_AXIS];
+  static int32_t position_steps[N_AXIS];
+  static float unit_vec[N_AXIS];
+  float delta_mm;
   uint8_t idx;
 
   // Copy position data based on type of motion being planned.

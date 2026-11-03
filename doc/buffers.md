@@ -12,7 +12,7 @@ documento no es la fuente de verdad**, es el mapa. Verifica siempre con `grep`.
 | `LINE_BUFFER_SIZE` | `src/protocol.h:32` | 48 | línea G-code máxima aceptada |
 | `LLP_TX_LINE_BUF_SIZE` | `src/llp_transport.h:26` | 64 | búfer de línea antes de framear |
 | `LLP_MAX_PAYLOAD` | `src/config.h:713` | 64 | payload máximo por frame LLP |
-| `BLOCK_BUFFER_SIZE` | `src/planner.h:29` y `:31` | 12 | bloques del planificador |
+| `BLOCK_BUFFER_SIZE` | `src/planner.h:29` y `:31` | 8 | bloques del planificador (bajado de 12, ver "Stack") |
 | `LLP_FRAME_TIMEOUT_MS` | `src/llp_protocol.h:55` | 2000 | timeout inter-byte del parser |
 
 ## Trampa: `src/config.h` miente por diseño
@@ -66,7 +66,38 @@ Y para el consumo real:
    de `Data` que reporta `avr-size`). Recompila y vuelve a medir antes de dar por
    bueno el cambio.
 4. `BLOCK_BUFFER_SIZE` afecta el comando `#` (`buf:N` = bloques libres) y la suavidad
-   del streaming; 12 es el mínimo probado para PCB.
+   del streaming. Se bajó de 12 a 8 para liberar 184 B de RAM estática: con los feeds
+   de esta máquina (< 500 mm/min) el lookahead sobrante no aporta nada y el stack lo
+   necesitaba (ver "Stack"). No lo bajes más sin medir `pk=`.
+
+## Stack: el recurso más ajustado
+
+La RAM libre por encima de `.data`/`.bss`/`.noinit` es el stack. En el ATmega328P del
+Uno eran **323 B** con el build anterior: la cadena más profunda (ver abajo) llegaba a
+**331 B** y escribía dentro de `.noinit`, corrompiendo el diagnóstico de resets
+(`ca`, `last_reset_source`, `diag_magic`) sin que nada fallara visiblemente.
+
+Cadena más profunda (medida con el desensamblado, `main` incluye
+`protocol_main_loop`/`protocol_execute_line` inlineados):
+
+```
+main (33) → gc_execute_line (94) → mc_line (7) → protocol_execute_realtime (21)
+          → protocol_exec_rt_system (56, incluye report_realtime_status)
+          → report/print (printFloat 27, etc.)     ← acá se imprimen ?/[DBG]
+```
+
+`mc_line()` espera espacio en el planificador llamando a `protocol_execute_realtime()`
+(`src/motion_control.c:61`), así que **los reportes de estado y el `[DBG]` se imprimen
+desde el punto más profundo** mientras el planner está lleno. Encima de eso se apila
+cualquier ISR (la de UART RX son 21 B).
+
+Medición: al arrancar se pinta la región libre con `0x5A` (`system_diag_stack_paint()`);
+en el arranque siguiente se escanea y se reporta `[MSG:BOOT:stk=<pico> lim=<total>]`.
+El keep-alive reporta el pico vivo en `pk=`.
+
+Valores de referencia tras el fix: `lim=471`, `pk=331` con streaming y planner lleno.
+Si `pk` se acerca a `lim`, el `.noinit` va a volver a corromperse: liberá RAM
+(`BLOCK_BUFFER_SIZE`, locales `static`) antes de que eso pase.
 
 ## Stats del comando `#`
 

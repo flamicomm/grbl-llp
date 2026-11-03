@@ -192,7 +192,7 @@ cada una dentro de una sola trama LLP):
 ```
 [DBG:t=... s=... sp=... bf=...]
 [DBG:tx=... rx=... u=... re=... rt=...]
-[DBG:rd=... td=... ca=...]
+[DBG:rd=... td=... ca=... pk=...]
 ```
 
 En cada **reset de CPU** imprime además, antes del banner:
@@ -205,6 +205,10 @@ En cada **reset de CPU** imprime además, antes del banner:
 `n` cuenta reinicios desde el último encendido, `m` indica si la RAM se conservó
 (reset) o hubo power-on, y `up` es el uptime del último pasaje del main loop de la
 vida anterior (sirve para distinguir un reset inmediato de un cuelgue previo).
+
+Se agrega `stk=` (pico de stack de la vida anterior) y `lim=` (RAM disponible para el
+stack). Si `stk` se acerca a `lim`, el stack puede desbordar hacia `.noinit` y
+corromper todo este diagnóstico; el keep-alive reporta el pico en vivo como `pk=`.
 
 **Ojo:** el bootloader optiboot de Arduino limpia `MCUSR` antes de saltar al
 sketch, así que en un Uno/Nano estándar el sketch **siempre** reporta
