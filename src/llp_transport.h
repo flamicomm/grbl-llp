@@ -23,13 +23,13 @@
 
 #include "llp_protocol.h"
 
-#define LLP_TX_LINE_BUF_SIZE  64
+#define LLP_TX_LINE_BUF_SIZE  48
 
-// A line is flushed to a frame every LLP_TX_CHUNK_SIZE bytes. This must stay
-// below LLP_MAX_PAYLOAD: llp_build_final_payload() prepends the layer byte, so
-// a chunk of LLP_MAX_PAYLOAD bytes would need LLP_MAX_PAYLOAD + 1 and the frame
-// would be silently discarded (the head of every long line would vanish).
-#define LLP_TX_CHUNK_SIZE     (LLP_MAX_PAYLOAD - 1)
+// A line is flushed to a frame every LLP_TX_CHUNK_SIZE bytes. The whole
+// worst-case frame must fit in the TX ring, because llp_transport_tx_flush()
+// reserves it before writing anything (all-or-nothing, no partial frames).
+// grbl's own LINE_BUFFER_SIZE is 48, so in practice every line is one frame.
+#define LLP_TX_CHUNK_SIZE     LLP_TX_LINE_BUF_SIZE
 
 // The line buffer must be able to hold a full chunk before the flush happens.
 typedef char llp_tx_chunk_fits_line_buf[(LLP_TX_LINE_BUF_SIZE >= LLP_TX_CHUNK_SIZE) ? 1 : -1];

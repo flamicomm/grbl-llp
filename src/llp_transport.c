@@ -39,8 +39,56 @@ static volatile uint16_t llp_rx_raw_bytes = 0;
 // llp_rx_byte() runs in ISR context; llp_transport_tx_flush() in main context.
 // Note: RX uses llp_get_final_payload_ptr() for zero-copy reads directly from
 // the parser's frame buffer, so no separate RX payload buffer is needed.
-static uint8_t llp_tx_payload_buf[LLP_MAX_PAYLOAD];
-static uint8_t llp_tx_frame_buf[LLP_MAX_FRAME_SIZE(LLP_MAX_PAYLOAD)];
+// TX streams the frame straight into the UART ring (see llp_transport_tx_flush),
+// so there is no frame buffer either.
+
+// Maximum time to wait for room in the TX ring before dropping a frame. The
+// ring drains at ~86 us/byte (115200 baud), so a full 128-byte ring clears in
+// ~11 ms; 10 ms covers all but the pathological case.
+#define LLP_TX_WAIT_MS 10u
+
+// Worst case for one line: magic (2, never stuffed) + stuffed LEN(2) + stuffed
+// payload (FinalNode byte + line) + stuffed CRC(2).
+#define LLP_TX_FRAME_MAX(line_len) \
+    (2u + 2u * ((uint16_t)(line_len) + 1u + 4u))
+
+// The worst-case frame must fit the ring; otherwise an all-or-nothing flush
+// would never succeed. Enforced at compile time.
+#define LLP_TX_RING_FREE_MAX ((uint16_t)(TX_RING_BUFFER - 1))
+typedef char llp_tx_frame_fits_ring
+    [(LLP_TX_FRAME_MAX(LLP_TX_LINE_BUF_SIZE) <= LLP_TX_RING_FREE_MAX) ? 1 : -1];
+
+// Free bytes in the TX ring. `head` is only written from this (main) context;
+// the UDRE ISR only advances `tail`, which can only increase the result.
+static uint16_t llp_tx_ring_free(void)
+{
+    uint8_t head = serial_tx_buffer_head;
+    uint8_t tail = serial_tx_buffer_tail;
+    if (tail > head) {
+        return (uint16_t)(tail - head - 1u);
+    }
+    return (uint16_t)((uint16_t)TX_RING_BUFFER - head + tail - 1u);
+}
+
+// Push one byte into the ring. Space was reserved beforehand, so no check.
+static void llp_tx_push_raw(uint8_t byte)
+{
+    uint8_t next = serial_tx_buffer_head + 1u;
+    if (next == TX_RING_BUFFER) { next = 0; }
+    serial_tx_buffer[serial_tx_buffer_head] = byte;
+    serial_tx_buffer_head = next;
+}
+
+// Emit a byte applying LLP byte stuffing.
+static void llp_tx_push_stuffed(uint8_t byte)
+{
+    if (byte == LLP_MAGIC_1) {
+        llp_tx_push_raw(LLP_MAGIC_1);
+        llp_tx_push_raw(0x00u);
+    } else {
+        llp_tx_push_raw(byte);
+    }
+}
 
 void llp_transport_init(void)
 {
@@ -193,9 +241,10 @@ void llp_transport_tx_byte(uint8_t byte)
         llp_tx_line_buf[llp_tx_line_idx++] = byte;
     }
 
-    // Flush on newline or when the chunk reaches LLP_TX_CHUNK_SIZE. Flushing at
-    // the full line-buffer size (or at LLP_MAX_PAYLOAD) overflows the payload
-    // once the layer byte is prepended and drops the whole frame.
+    // Flush on newline or when the line buffer is full. The chunk size equals
+    // the line buffer size, so a full buffer always flushes; the payload
+    // (FinalNode + chunk) must stay <= LLP_MAX_PAYLOAD and the whole frame must
+    // fit the TX ring (both checked at compile time).
     if (byte == '\n' || llp_tx_line_idx >= LLP_TX_CHUNK_SIZE) {
         llp_transport_tx_flush();
     }
@@ -207,35 +256,53 @@ void llp_transport_tx_flush(void)
     if (idx == 0) return;
     llp_tx_line_idx = 0;
 
-    size_t payload_len = llp_build_final_payload(llp_tx_payload_buf, sizeof(llp_tx_payload_buf),
-                                                   llp_tx_line_buf, (uint16_t)idx);
-    if (payload_len == 0) return;
+    /* Payload = FinalNode layer byte (0x00) + the line. Worst-case frame:
+     * magic(2, never stuffed) + stuffed LEN(2) + stuffed payload + stuffed
+     * CRC(2). The whole frame is reserved in the ring before writing, so a
+     * frame is either queued completely or not at all (no partial frames and
+     * no torn headers on the wire). */
+    uint16_t payload_len = (uint16_t)idx + 1u;
+    uint16_t needed = 2u + 2u * (payload_len + 4u);
 
-    size_t frame_len = llp_build_frame(llp_tx_frame_buf, sizeof(llp_tx_frame_buf),
-                                         llp_tx_payload_buf, (uint16_t)payload_len);
-    if (frame_len == 0) return;
-
-    for (size_t i = 0; i < frame_len; i++) {
-        uint8_t next_head = serial_tx_buffer_head + 1;
-        if (next_head == TX_RING_BUFFER) { next_head = 0; }
-        // Wait for space in the TX ring buffer. The SERIAL_UDRE ISR drains
-        // bytes to the UART at 115200 baud (~86 us/byte). This spin-loop is
-        // safe because: (a) interrupts remain enabled so the ISR runs, and
-        // (b) this path is only reached from the main loop in IDLE state
-        // (e.g. $$ report). A safety counter prevents infinite stalls if
-        // the UART hardware fails.
-        uint16_t spin = 10000;
-        while (next_head == serial_tx_buffer_tail) {
-            UCSR0B |= (1 << UDRIE0);
-            if (--spin == 0) {
-                llp_tx_dropped_count++;
-                UCSR0B |= (1 << UDRIE0);
-                return;
-            }
-        }
-        serial_tx_buffer[serial_tx_buffer_head] = llp_tx_frame_buf[i];
-        serial_tx_buffer_head = next_head;
+    /* A frame that cannot ever fit the ring is dropped instead of waiting. */
+    if (needed > (uint16_t)LLP_TX_RING_FREE_MAX) {
+        llp_tx_dropped_count++;
+        return;
     }
+
+    /* Wait (bounded) for space; the UDRE ISR drains meanwhile. */
+    uint16_t wait_start = (uint16_t)llp_transport_get_ms();
+    while (llp_tx_ring_free() < needed) {
+        UCSR0B |= (1 << UDRIE0);
+        if ((uint16_t)((uint16_t)llp_transport_get_ms() - wait_start) >= LLP_TX_WAIT_MS) {
+            llp_tx_dropped_count++;
+            return;
+        }
+    }
+
+    /* CRC over MAGIC + LEN + PAYLOAD (unescaped), as defined by the protocol. */
+    uint8_t len_lo = (uint8_t)(payload_len & 0xFFu);
+    uint8_t len_hi = (uint8_t)(payload_len >> 8);
+    uint16_t crc = 0xFFFFu;
+    crc = llp_crc16_update(crc, LLP_MAGIC_1);
+    crc = llp_crc16_update(crc, LLP_MAGIC_2);
+    crc = llp_crc16_update(crc, len_lo);
+    crc = llp_crc16_update(crc, len_hi);
+    crc = llp_crc16_update(crc, LLP_LAYER_ID_FINAL);
+    for (uint8_t i = 0; i < idx; i++) {
+        crc = llp_crc16_update(crc, llp_tx_line_buf[i]);
+    }
+
+    llp_tx_push_raw(LLP_MAGIC_1);
+    llp_tx_push_raw(LLP_MAGIC_2);
+    llp_tx_push_stuffed(len_lo);
+    llp_tx_push_stuffed(len_hi);
+    llp_tx_push_stuffed(LLP_LAYER_ID_FINAL);
+    for (uint8_t i = 0; i < idx; i++) {
+        llp_tx_push_stuffed(llp_tx_line_buf[i]);
+    }
+    llp_tx_push_stuffed((uint8_t)(crc & 0xFFu));
+    llp_tx_push_stuffed((uint8_t)(crc >> 8));
 
     UCSR0B |= (1 << UDRIE0);
 }

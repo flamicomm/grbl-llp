@@ -10,7 +10,8 @@ documento no es la fuente de verdad**, es el mapa. Verifica siempre con `grep`.
 | `TX_BUFFER_SIZE` | `src/serial.h:31` y `:33` | 128 | dos ramas (`USE_LINE_NUMBERS` on/off), mismo valor |
 | `RX_BUFFER_SIZE` | `src/serial.h:27` | 80 | sin cambios respecto a Grbl |
 | `LINE_BUFFER_SIZE` | `src/protocol.h:32` | 48 | línea G-code máxima aceptada |
-| `LLP_TX_LINE_BUF_SIZE` | `src/llp_transport.h:26` | 64 | búfer de línea antes de framear |
+| `LLP_TX_LINE_BUF_SIZE` | `src/llp_transport.h:26` | 48 | búfer de línea antes de framear (igual a `LINE_BUFFER_SIZE`) |
+| `TX_RING_BUFFER` | `src/serial.h:40` | 129 | 128 usables; la trama se emite directo acá (sin `frame_buf`) |
 | `LLP_MAX_PAYLOAD` | `src/config.h:713` | 64 | payload máximo por frame LLP |
 | `BLOCK_BUFFER_SIZE` | `src/planner.h:29` y `:31` | 8 | bloques del planificador (bajado de 12, ver "Stack") |
 | `LLP_FRAME_TIMEOUT_MS` | `src/llp_protocol.h:55` | 2000 | timeout inter-byte del parser |
@@ -61,7 +62,9 @@ Y para el consumo real:
 
 1. `LINE_BUFFER_SIZE` debe caber en `LLP_MAX_PAYLOAD` (la línea viaja como payload).
 2. `LLP_TX_LINE_BUF_SIZE` debe poder contener la respuesta más larga antes de framear
-   (`TX_BUFFER_SIZE` puede ser mayor: acumula frames ya construidos).
+   y, junto con el resto de la trama, entrar completa en `TX_RING_BUFFER`: el
+   emisor reserva el peor caso antes de escribir (todo o nada), y hay un
+   `_Static_assert`-style que lo verifica en compilación.
 3. Subir cualquiera de los tres reduce el margen libre de RAM (2048 B menos el valor
    de `Data` que reporta `avr-size`). Recompila y vuelve a medir antes de dar por
    bueno el cambio.
@@ -95,7 +98,8 @@ Medición: al arrancar se pinta la región libre con `0x5A` (`system_diag_stack_
 en el arranque siguiente se escanea y se reporta `[MSG:BOOT:stk=<pico> lim=<total>]`.
 El keep-alive reporta el pico vivo en `pk=`.
 
-Valores de referencia tras el fix: `lim=471`, `pk=331` con streaming y planner lleno.
+Valores de referencia tras el fix de stack y del emisor en streaming: `lim=689`,
+`pk=331` con streaming y planner lleno (≈358 B de margen).
 Si `pk` se acerca a `lim`, el `.noinit` va a volver a corromperse: liberá RAM
 (`BLOCK_BUFFER_SIZE`, locales `static`) antes de que eso pase.
 

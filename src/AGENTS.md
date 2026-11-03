@@ -80,6 +80,6 @@ Los números de línea de esta tabla son volátiles: confírmalos con
   `last_reset_source`, `a0_transient_count`, `diag_*`). `system_diag_boot_init()`
   tiene que ser lo primero que corre en `main()`. No metas estado normal ahí.
 - **Largo de las líneas de salida:** `llp_transport_tx_byte()` corta la línea cada
-  `LLP_TX_CHUNK_SIZE` (`LLP_MAX_PAYLOAD - 1`, hoy 63 bytes). Una línea más larga
-  se parte en varias tramas; si un chunk llegara a `LLP_MAX_PAYLOAD`, se descarta
-  por el byte de layer. Mantené el debug por debajo de ~60 caracteres.
+  `LLP_TX_CHUNK_SIZE` (hoy 48 bytes, igual a `LLP_TX_LINE_BUF_SIZE`). Una línea más
+  larga se parte en varias tramas; la trama completa (peor caso) tiene que entrar en
+  `TX_RING_BUFFER` porque el emisor reserva el espacio antes de escribir.
