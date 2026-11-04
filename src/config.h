@@ -678,20 +678,9 @@
 /* ---------------------------------------------------------------------------------------
    LLP TRANSPORT LAYER CONFIGURATION:
 
-   LLP_MAX_PAYLOAD defines the maximum payload size for LLP frames. This must be large
-   enough to hold the longest G-code line (typically LINE_BUFFER_SIZE chars) plus the
-   FinalNode layer byte. Default is 96 bytes (80 chars + margin).
-   NOTE: Increasing this value increases RAM usage significantly on ATmega328P.
-   #define LLP_MAX_PAYLOAD 96
-
-   LLP_FRAME_TIMEOUT_MS defines the inter-byte timeout in milliseconds before the
-   parser resets. Default is 2000ms.
-   #define LLP_FRAME_TIMEOUT_MS 2000
-
-   LLP_ENABLE_STATS defines whether parser-level statistics are tracked. Disabled
-   by default in v3.1.0 to save 12 bytes of RAM per parser instance. grbl-llp uses
-   its own transport-level counters instead.
-   #define LLP_ENABLE_STATS 0
+   There is nothing to override here. The wire format and its defaults live in
+   src/llp_v4.h; the grbl adapter's own knobs live in src/llp_transport.h
+   (LLP_RX_PAYLOAD_SIZE, LLP_RX_TIMEOUT_MS, LLP_TX_LINE_BUF_SIZE, LLP_TX_CHANNEL).
 
    TX_BUFFER_SIZE must be large enough to hold a complete LLP frame for the longest
    response. The default of 160 should be sufficient for most status reports.
