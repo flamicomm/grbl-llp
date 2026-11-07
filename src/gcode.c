@@ -689,6 +689,7 @@ uint8_t gc_execute_line(char *line)
           break;
         case MOTION_MODE_CW_ARC: 
         #ifndef ENABLE_ARC_SUPPORT
+        case MOTION_MODE_CCW_ARC:
           FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Arc support compiled out]
         #else
           gc_parser_flags |= GC_PARSER_ARC_IS_CLOCKWISE; // No break intentional.
