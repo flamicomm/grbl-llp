@@ -14,11 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - **Presupuesto de flash**: el build de esta máquina apaga arcos (~3220 B), no-modales
-  extendidos (~500 B) y startup blocks (~290 B). UNO pasa de 97.0% a 84.5%
-  (27258/32256 B); Nano a 88.7% (27258/30720 B). El G-code que genera el host no cambia:
+  extendidos (~500 B) y startup blocks (~290 B). UNO pasa de 97.0% a 84.2%
+  (27148/32256 B); Nano a 88.4% (27148/30720 B). El G-code que genera el host no cambia:
   usa G0/G1, G38.x y G92.
 - `$RST=*`, `$RST=$` y `$RST=#` se conservan: apagarlos ahorra <10 B y `$RST=$` es parte
   del procedimiento de reseteo de EEPROM post-flash.
+
+### Fixed
+- `G3` con `ENABLE_ARC_SUPPORT` apagado caía sin etiqueta `case` y terminaba en la rama de
+  probe. Ahora `G2` y `G3` responden `error:20`.
+- `$N0=...` con `N_STARTUP_LINE 0` escribía EEPROM al pedo y tardaba segundos en contestar.
+  Ahora responde `error:7` de inmediato.
+- `scripts/test_r1.py`: las líneas de texto pueden venir partidas entre frames LLP (wrap del
+  ring); el banco ahora las reensambla por `\n` y drena el `ok` de preparación antes de
+  contar, así T1/T4 no fallan por carrera.
 
 ## [1.1.0] - 2026-06-10
 

@@ -62,7 +62,7 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
-| Flash usado | ~93% (Grbl original) | **84.5%** UNO / **88.7%** Nano (optimizado para PCB) |
+| Flash usado | ~93% (Grbl original) | **84.2%** UNO / **88.4%** Nano (optimizado para PCB) |
 | RAM usada | ~80% | **67.2%** |
 
 ## Archivos agregados/modificados clave
@@ -207,7 +207,7 @@ entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
 
 Medido con `avr-size` sobre el build actual (`pio run -e uno` / `-e nano`, `-Os`):
 
-- **UNO**: 84.5% (27258/32256 bytes) · **Nano**: 88.7% (27258/30720 bytes)
+- **UNO**: 84.2% (27148/32256 bytes) · **Nano**: 88.4% (27148/30720 bytes)
 - **RAM**: 67.2% (1377/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
 
