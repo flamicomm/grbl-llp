@@ -178,6 +178,13 @@ El keep-alive reporta la salud del enlace en una cuarta línea:
 `dup` > 0 significa que hubo retransmisiones (ACK perdido) y que el dedup las
 absorbió; `busy` cuenta comandos diferidos por falta de espacio en el ring.
 
+En Python, `scripts/llp_rel.py` es la copia vendorizada de la referencia y
+`scripts/llp_link.py` el enlace de alto nivel que usan `stream_gcode.py` y
+`test_r1.py`. Si el firmware no ACKea el primer comando (versión sin R1), el
+enlace lo avisa y sigue por el canal 0, así el mismo script sirve para ambos
+firmwares. `python3 scripts/llp_link.py --self-test` ejercita entrega limpia,
+ACK perdido, comando perdido y auto-detección contra un MCU simulado.
+
 Para el banco hay inyección de fallas (nunca en una máquina cortando):
 `#define LLP_TEST_DROP_CH1 20` tira 1 comando de cada 20 y
 `#define LLP_TEST_DROP_ACK 20` tira 1 ACK de cada 20. El arnés
@@ -188,8 +195,10 @@ entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
 
 | Script | Descripción |
 |---|---|
-| `scripts/stream_gcode.py` | Streaming G-code real vía LLP |
+| `scripts/stream_gcode.py` | Streaming G-code real vía LLP (usa R1: reintenta en vez de abortar) |
 | `scripts/llp.py` | Librería LLP v4 (encode/decode/parser) |
+| `scripts/llp_rel.py` | Perfil R1 (`Sender`/`Receiver`) — copia vendorizada de la referencia |
+| `scripts/llp_link.py` | Enlace serie con R1: ACK, hello y auto-detección de firmware sin R1 (`--self-test` sin hardware) |
 | `scripts/test_r1.py` | Banco del perfil R1 (ACK, dedup, retransmisión) por puerto serie |
 | `test_short.gcode` | G-code corto para pruebas rápidas |
 | `test_large.gcode` | G-code real de PCB (FlatCAM, ~5000 líneas) |
