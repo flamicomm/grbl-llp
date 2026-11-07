@@ -61,6 +61,7 @@ class Bench:
         self.oks = 0
         self.text: list[str] = []
         self.retransmits = 0
+        self.line_buf = ""
 
     def close(self) -> None:
         self.ser.close()
@@ -98,11 +99,18 @@ class Bench:
             return
         if channel != 0:
             return
-        line = payload.decode("latin1", "replace").strip()
-        if line == "ok":
-            self.oks += 1
-        if line == "ok" or line.startswith(("[MSG", "[DBG", "error")):
-            self.text.append(line)
+        # A line can be split across frames: the MCU drains its TX ring in chunks, so a
+        # ring wrap can cut a line in two. Reassemble by newline before counting.
+        self.line_buf += payload.decode("latin1", "replace")
+        while "\n" in self.line_buf:
+            raw, self.line_buf = self.line_buf.split("\n", 1)
+            line = raw.strip()
+            if not line:
+                continue
+            if line == "ok":
+                self.oks += 1
+            if line == "ok" or line.startswith(("[MSG", "[DBG", "error")):
+                self.text.append(line)
 
     # -- profile ---------------------------------------------------------
     def hello(self, session: int = rel.DEFAULT_SESSION) -> None:
@@ -162,9 +170,12 @@ def main() -> int:
         link.hello()
         acked, attempts = link.command(b"$X\n")
         report.check(acked, f"$X aceptado (seq 0, {attempts} intento/s)")
+        # Drain the "ok" of $X before zeroing the counters. The ACK of a command is sent
+        # before the line is executed, so its "ok" can still be in flight and would be
+        # counted as an extra one in T1.
+        link.pump(0.3)
         link.acks.clear()
         link.oks = 0
-        link.pump(0.3)
 
         print("== T1: entrega limpia ==")
         sent = 0
