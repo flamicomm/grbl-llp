@@ -1,26 +1,18 @@
 /*
-  llp_transport.c — LLP over UART transport layer for Grbl
-  Part of Grbl-LLP
+  llp_transport.c — LLP v4 (wire format 4.0.0) over UART for Grbl
 
-  Copyright (c) 2024
+  Framing is done by src/llp_v4.h; this file only connects it to the UART:
+  the RX interrupt feeds the parser, the main loop encodes into the TX ring.
 
-  Grbl-LLP is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Grbl-LLP is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with Grbl-LLP.  If not, see <http://www.gnu.org/licenses/>.
+  RAM: the v4 parser keeps ~17 bytes of state and writes the payload into
+  llp_rx_payload, so there is no per-parser payload buffer. TX streams straight
+  into grbl's serial ring; there is no frame buffer.
 */
 
 #include "grbl.h"
 
-static llp_parser_t llp_rx_parser;
+static llp4_parser_t llp_rx_parser;
+static uint8_t llp_rx_payload[LLP_RX_PAYLOAD_SIZE];
 
 static uint8_t llp_tx_line_buf[LLP_TX_LINE_BUF_SIZE];
 static volatile uint8_t llp_tx_line_idx = 0;
@@ -34,17 +26,47 @@ static volatile uint16_t llp_rx_dropped_count = 0;
 static volatile uint16_t llp_tx_dropped_count = 0;
 static volatile uint16_t llp_rx_raw_bytes = 0;
 
-// Static buffers for LLP frame construction (avoid large stack allocations that
-// risk overflowing into BSS on RAM-constrained ATmega328P).
-// llp_rx_byte() runs in ISR context; llp_transport_tx_flush() in main context.
-// Note: RX uses llp_get_final_payload_ptr() for zero-copy reads directly from
-// the parser's frame buffer, so no separate RX payload buffer is needed.
-static uint8_t llp_tx_payload_buf[LLP_MAX_PAYLOAD];
-static uint8_t llp_tx_frame_buf[LLP_MAX_FRAME_SIZE(LLP_MAX_PAYLOAD)];
+/* Maximum time to wait for room in the TX ring before dropping a frame. */
+#define LLP_TX_WAIT_MS 10u
+
+/* Must match llp4_frame_size(): the whole worst-case frame has to fit in the
+ * ring because the flush reserves it before writing. Checked at compile time. */
+#define LLP_TX_RING_FREE_MAX ((uint16_t)(TX_RING_BUFFER - 1))
+typedef char llp_tx_frame_fits_ring
+    [(LLP4_FRAME_SIZE(LLP_TX_LINE_BUF_SIZE) <= LLP_TX_RING_FREE_MAX) ? 1 : -1];
+
+/* Free bytes in the TX ring. `head` is only written from the main loop; the
+ * UDRE ISR only advances `tail`, which can only increase the result. */
+static uint16_t llp_tx_ring_free(void)
+{
+    uint8_t head = serial_tx_buffer_head;
+    uint8_t tail = serial_tx_buffer_tail;
+    if (tail > head) {
+        return (uint16_t)(tail - head - 1u);
+    }
+    return (uint16_t)((uint16_t)TX_RING_BUFFER - head + tail - 1u);
+}
+
+/* Push one byte into the ring. Space was reserved beforehand, so no check. */
+static void llp_tx_push_raw(uint8_t byte)
+{
+    uint8_t next = serial_tx_buffer_head + 1u;
+    if (next == TX_RING_BUFFER) { next = 0; }
+    serial_tx_buffer[serial_tx_buffer_head] = byte;
+    serial_tx_buffer_head = next;
+}
+
+/* Encoder sink: the library does stuffing and CRC, we only store bytes. */
+static void llp_tx_sink(void *ctx, uint8_t byte)
+{
+    (void)ctx;
+    llp_tx_push_raw(byte);
+}
 
 void llp_transport_init(void)
 {
-    llp_parser_init(&llp_rx_parser);
+    llp4_parser_init(&llp_rx_parser, llp_rx_payload,
+                     (uint8_t)sizeof(llp_rx_payload), LLP_RX_TIMEOUT_MS);
     llp_tx_line_idx = 0;
 
     TCCR2A = 0;
@@ -76,6 +98,7 @@ static void llp_process_payload(const uint8_t *payload, uint16_t len)
         uint8_t c = payload[i];
         switch (c) {
             case CMD_RESET:
+                system_set_reset_source(RESET_SRC_LLP);
                 mc_reset();
                 break;
             case CMD_STATUS_REPORT:
@@ -167,20 +190,22 @@ static void llp_process_payload(const uint8_t *payload, uint16_t len)
 
 void llp_transport_rx_byte(uint8_t byte)
 {
-    llp_rx_raw_bytes++;
-    unsigned long now = llp_ms_counter;
-    int result = llp_parser_process_byte(&llp_rx_parser, byte, now);
+    int rc;
 
-    if (result == 1) {
-        uint16_t payload_len;
-        const uint8_t *payload = llp_get_final_payload_ptr(&llp_rx_parser.frame, &payload_len);
-        if (payload != NULL && payload_len > 0) {
+    llp_rx_raw_bytes++;
+    /* Inside the UART ISR: interrupts are disabled, so the 32-bit counter read
+     * cannot tear. The parser only needs 16 bits (wrap-safe). */
+    rc = llp4_parser_feed(&llp_rx_parser, byte, (uint16_t)llp_ms_counter);
+
+    if (rc == LLP4_EV_FRAME) {
+        uint8_t len = llp_rx_parser.length;
+        if (len > 0) {
             llp_rx_frame_count++;
-            llp_process_payload(payload, payload_len);
+            llp_process_payload(llp_rx_payload, len);
         }
-    } else if (result < 0) {
+    } else if (rc < 0) {
         llp_rx_error_count++;
-        if (llp_rx_parser.error_code == LLP_ERR_TIMEOUT) {
+        if (rc == -(int)LLP4_ERR_TIMEOUT) {
             llp_rx_timeout_count++;
         }
     }
@@ -192,7 +217,8 @@ void llp_transport_tx_byte(uint8_t byte)
         llp_tx_line_buf[llp_tx_line_idx++] = byte;
     }
 
-    if (byte == '\n' || llp_tx_line_idx >= LLP_TX_LINE_BUF_SIZE) {
+    // Flush on newline or when the line buffer is full.
+    if (byte == '\n' || llp_tx_line_idx >= LLP_TX_CHUNK_SIZE) {
         llp_transport_tx_flush();
     }
 }
@@ -200,38 +226,38 @@ void llp_transport_tx_byte(uint8_t byte)
 void llp_transport_tx_flush(void)
 {
     uint8_t idx = llp_tx_line_idx;
-    if (idx == 0) return;
+    llp4_tx_t tx;
+    uint16_t needed;
+    uint16_t wait_start;
+    uint8_t i;
+
+    if (idx == 0) {
+        return;
+    }
     llp_tx_line_idx = 0;
 
-    size_t payload_len = llp_build_final_payload(llp_tx_payload_buf, sizeof(llp_tx_payload_buf),
-                                                   llp_tx_line_buf, (uint16_t)idx);
-    if (payload_len == 0) return;
-
-    size_t frame_len = llp_build_frame(llp_tx_frame_buf, sizeof(llp_tx_frame_buf),
-                                         llp_tx_payload_buf, (uint16_t)payload_len);
-    if (frame_len == 0) return;
-
-    for (size_t i = 0; i < frame_len; i++) {
-        uint8_t next_head = serial_tx_buffer_head + 1;
-        if (next_head == TX_RING_BUFFER) { next_head = 0; }
-        // Wait for space in the TX ring buffer. The SERIAL_UDRE ISR drains
-        // bytes to the UART at 115200 baud (~86 us/byte). This spin-loop is
-        // safe because: (a) interrupts remain enabled so the ISR runs, and
-        // (b) this path is only reached from the main loop in IDLE state
-        // (e.g. $$ report). A safety counter prevents infinite stalls if
-        // the UART hardware fails.
-        uint16_t spin = 10000;
-        while (next_head == serial_tx_buffer_tail) {
-            UCSR0B |= (1 << UDRIE0);
-            if (--spin == 0) {
-                llp_tx_dropped_count++;
-                UCSR0B |= (1 << UDRIE0);
-                return;
-            }
-        }
-        serial_tx_buffer[serial_tx_buffer_head] = llp_tx_frame_buf[i];
-        serial_tx_buffer_head = next_head;
+    needed = (uint16_t)llp4_frame_size(idx);
+    if (needed > LLP_TX_RING_FREE_MAX) {
+        llp_tx_dropped_count++;
+        return;
     }
+
+    /* Reserve the worst case first: the frame is queued completely or not at
+     * all, so the wire never sees a partial frame. */
+    wait_start = (uint16_t)llp_transport_get_ms();
+    while (llp_tx_ring_free() < needed) {
+        UCSR0B |= (1 << UDRIE0);
+        if ((uint16_t)((uint16_t)llp_transport_get_ms() - wait_start) >= LLP_TX_WAIT_MS) {
+            llp_tx_dropped_count++;
+            return;
+        }
+    }
+
+    llp4_tx_begin(&tx, LLP_TX_CHANNEL, idx, llp_tx_sink, NULL);
+    for (i = 0; i < idx; i++) {
+        llp4_tx_byte(&tx, llp_tx_line_buf[i]);
+    }
+    llp4_tx_end(&tx);
 
     UCSR0B |= (1 << UDRIE0);
 }

@@ -89,6 +89,17 @@
   #define CONTROL_MASK      ((1<<CONTROL_RESET_BIT)|(1<<CONTROL_FEED_HOLD_BIT)|(1<<CONTROL_CYCLE_START_BIT)|(1<<CONTROL_SAFETY_DOOR_BIT))
   #define CONTROL_INVERT_MASK   CONTROL_MASK // May be re-defined to only invert certain control pins.
 
+  // Effective mask used to configure and read the control inputs. With
+  // DISABLE_CONTROL_RESET_PIN the reset/abort pin (A0) is removed from the
+  // mask, so it generates no pin-change interrupt and can never reset the
+  // MCU. Use it on machines without an abort button, where a floating A0
+  // picks up EMI from a brushed spindle and causes spurious soft resets.
+  #ifdef DISABLE_CONTROL_RESET_PIN
+    #define CONTROL_MASK_USED (CONTROL_MASK & ~(1<<CONTROL_RESET_BIT))
+  #else
+    #define CONTROL_MASK_USED CONTROL_MASK
+  #endif
+
   // Define probe switch input pin.
   #define PROBE_DDR       DDRC
   #define PROBE_PIN       PINC

@@ -21,15 +21,133 @@
 #include "grbl.h"
 
 
+// Volatile because it is written from ISR context (A0 pin) and read from
+// the main loop / reset handler. Kept in .noinit so it survives a hardware
+// reset (crt0 does not initialize .noinit); system_diag_boot_init() clears it
+// on a cold start.
+volatile uint8_t last_reset_source __attribute__((section(".noinit")));
+
+// A0 (reset/abort) pulses that were filtered out by the debounce. A growing
+// value during a job means EMI on that pin; it is reported as "ca=" in the
+// DEBUG_KEEPALIVE line. Saturates instead of wrapping so it stays monotonic,
+// and the increment is a single byte write, which is atomic on AVR. In
+// .noinit so the count stays meaningful across a reset.
+volatile uint8_t a0_transient_count __attribute__((section(".noinit")));
+
+// ---------------------------------------------------------------------------
+// Boot diagnostics that must survive a hardware reset.
+//
+// A real reset (brown-out, external reset, watchdog, or a jump back to the
+// reset vector) re-runs crt0, which zeroes .bss and reloads .data. Variables in
+// .noinit keep their RAM contents, so they are the only way to learn what the
+// previous life was doing when the MCU restarted. The magic distinguishes a
+// preserved block from the random contents left by a power-on.
+//
+// Note: the Arduino Uno bootloader (optiboot) reads and clears MCUSR before
+// jumping to the sketch, so the sketch always sees MCUSR == 0 and reports
+// "SFR"; these counters are what actually identify a hardware restart.
+// ---------------------------------------------------------------------------
+#define DIAG_MAGIC 0xB007u
+
+static volatile unsigned long diag_last_loop_ms __attribute__((section(".noinit")));
+static volatile uint16_t diag_magic __attribute__((section(".noinit")));
+static volatile uint16_t diag_boot_count __attribute__((section(".noinit")));
+
+// Returns 1 when the previous life's RAM was preserved (so this was a reset,
+// not a power-on), 0 on a cold start.
+uint8_t system_diag_boot_init(void)
+{
+  uint8_t preserved = 0;
+
+  if (diag_magic == DIAG_MAGIC) {
+    preserved = 1;
+    if (diag_boot_count < 0xFFFF) { diag_boot_count++; }
+  } else {
+    diag_magic = DIAG_MAGIC;
+    diag_boot_count = 1;
+    diag_last_loop_ms = 0;
+  }
+
+  if (!preserved) {
+    // Cold start: .noinit contents are undefined, do not trust them.
+    last_reset_source = RESET_SRC_NONE;
+    a0_transient_count = 0;
+  }
+
+  return preserved;
+}
+
+// Records the uptime of the last main-loop pass. Survives resets, so the next
+// boot can tell whether the loop was alive until the end or had been dead.
+void system_diag_mark_loop(unsigned long now)
+{
+  diag_last_loop_ms = now;
+}
+
+uint16_t system_diag_boot_count(void)
+{
+  return diag_boot_count;
+}
+
+unsigned long system_diag_last_loop_ms(void)
+{
+  return diag_last_loop_ms;
+}
+
+// ---------------------------------------------------------------------------
+// Stack watermark.
+//
+// The free RAM above .data/.bss/.noinit is the stack area, and .noinit sits
+// directly below it: a small overflow silently overwrites the boot diagnostics
+// (that is how the overflow was first noticed). At boot the unused region is
+// painted with a pattern; a later scan finds the first byte the stack touched,
+// which gives the peak usage of the previous life, ISRs included.
+// ---------------------------------------------------------------------------
+#define DIAG_STACK_PATTERN 0x5A
+// Bytes below the current SP that are never painted (headroom for the boot
+// reporting code itself).
+#define DIAG_STACK_GUARD   128u
+
+extern uint8_t _end;  // avr-libc: first byte after .data/.bss/.noinit
+
+// Total bytes available for the stack.
+uint16_t system_diag_stack_limit(void)
+{
+  return (uint16_t)((uint16_t)RAMEND + 1u - (uint16_t)&_end);
+}
+
+// Peak stack usage of the previous life. Must be called before painting (and
+// only when the .noinit magic survived, i.e. the pattern is still valid).
+uint16_t system_diag_stack_peak(void)
+{
+  uint16_t addr = (uint16_t)&_end;
+  uint16_t top = (uint16_t)RAMEND + 1u;
+  while (addr < top && *(const uint8_t *)addr == DIAG_STACK_PATTERN) { addr++; }
+  return (uint16_t)(top - addr);
+}
+
+void system_diag_stack_paint(void)
+{
+  uint16_t stop = (uint16_t)SP - DIAG_STACK_GUARD;
+  uint16_t addr = (uint16_t)&_end;
+  while (addr < stop) { *(uint8_t *)addr = DIAG_STACK_PATTERN; addr++; }
+}
+
+void system_set_reset_source(uint8_t src)
+{
+    last_reset_source = src;
+}
+
+
 void system_init()
 {
-  CONTROL_DDR &= ~(CONTROL_MASK); // Configure as input pins
+  CONTROL_DDR &= ~(CONTROL_MASK_USED); // Configure as input pins
   #ifdef DISABLE_CONTROL_PIN_PULL_UP
-    CONTROL_PORT &= ~(CONTROL_MASK); // Normal low operation. Requires external pull-down.
+    CONTROL_PORT &= ~(CONTROL_MASK_USED); // Normal low operation. Requires external pull-down.
   #else
-    CONTROL_PORT |= CONTROL_MASK;   // Enable internal pull-up resistors. Normal high operation.
+    CONTROL_PORT |= CONTROL_MASK_USED;   // Enable internal pull-up resistors. Normal high operation.
   #endif
-  CONTROL_PCMSK |= CONTROL_MASK;  // Enable specific pins of the Pin Change Interrupt
+  CONTROL_PCMSK |= CONTROL_MASK_USED;  // Enable specific pins of the Pin Change Interrupt
   PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
 }
 
@@ -44,7 +162,7 @@ volatile unsigned long ctrl_reset_time = 0;
 uint8_t system_control_get_state()
 {
   uint8_t control_state = 0;
-  uint8_t pin = (CONTROL_PIN & CONTROL_MASK) ^ CONTROL_MASK;
+  uint8_t pin = (CONTROL_PIN & CONTROL_MASK_USED) ^ CONTROL_MASK_USED;
   #ifdef INVERT_CONTROL_PIN_MASK
     pin ^= INVERT_CONTROL_PIN_MASK;
   #endif
@@ -60,21 +178,37 @@ uint8_t system_control_get_state()
   return(control_state);
 }
 
-// Software debounce for control reset pin (A0). Called from main loop via
-// protocol_execute_realtime(). If the reset pin remains LOW after
-// CONTROL_RESET_DEBOUNCE_MS, the reset is confirmed and mc_reset() is called.
-// Transient EMI/bounce pulses are ignored.
+// Software debounce for control reset pin (A0). Called from the main loop via
+// protocol_exec_rt_system(), which also runs inside the suspend loop (feed hold,
+// safety door, sleep). The ISR arms the timer on the falling edge and *clears*
+// it if the pin is released, so reaching the deadline means A0 stayed LOW
+// continuously for CONTROL_RESET_DEBOUNCE_MS. Transient EMI/bounce pulses are
+// counted in a0_transient_count and never reset the MCU.
+//
+// The flag, the timestamp and the pin sample are taken inside a short critical
+// section: ctrl_reset_time is a 4-byte value rewritten by the ISR, and a torn
+// read would make the subtraction wrap and fire the deadline early (a false A0
+// reset). mc_reset() runs outside the section.
 void system_check_control_reset_debounce()
 {
-  if (ctrl_reset_pending) {
-    unsigned long now = llp_transport_get_ms();
-    if (now - ctrl_reset_time >= CONTROL_RESET_DEBOUNCE_MS) {
-      uint8_t pin = system_control_get_state();
-      if (bit_istrue(pin, CONTROL_PIN_INDEX_RESET)) {
-        mc_reset();  // Pin still LOW after debounce → confirmed reset
-      }
-      ctrl_reset_pending = 0;  // Clear flag (executed or was transient)
-    }
+  if (!ctrl_reset_pending) { return; }
+
+  uint8_t sreg = SREG;
+  cli();
+  uint8_t pending = ctrl_reset_pending;
+  unsigned long armed_at = ctrl_reset_time;
+  unsigned long now = llp_transport_get_ms();
+  uint8_t pin_state = system_control_get_state();
+  SREG = sreg;
+
+  // pending == 0 means the ISR already saw the pin released (EMI pulse or
+  // contact bounce filtered), so there is nothing to confirm.
+  if (!pending || (now - armed_at) < CONTROL_RESET_DEBOUNCE_MS) { return; }
+
+  ctrl_reset_pending = 0;
+  if (bit_istrue(pin_state, CONTROL_PIN_INDEX_RESET)) {
+    system_set_reset_source(RESET_SRC_A0);
+    mc_reset();  // Pin still LOW after debounce → confirmed reset
   }
 }
 
@@ -86,15 +220,20 @@ void system_check_control_reset_debounce()
 ISR(CONTROL_INT_vect)
 {
   uint8_t pin = system_control_get_state();
-  if (pin) {
-    if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
-      // Deferred reset with debounce: set flag, main loop verifies after
-      // CONTROL_RESET_DEBOUNCE_MS. Prevents false triggers from EMI/bounce.
-      if (!ctrl_reset_pending) {
-        ctrl_reset_pending = 1;
-        ctrl_reset_time = llp_transport_get_ms();
-      }
+  if (bit_istrue(pin,CONTROL_PIN_INDEX_RESET)) {
+    // Deferred reset with debounce: arm the timer on the falling edge. The main
+    // loop confirms the reset only if A0 is still LOW when the window expires.
+    if (!ctrl_reset_pending) {
+      ctrl_reset_pending = 1;
+      ctrl_reset_time = llp_transport_get_ms();
     }
+  } else if (ctrl_reset_pending) {
+    // Pin released before the debounce window expired: transient pulse filtered
+    // (mechanical bounce or EMI). Count it so the debug keepalive can expose it.
+    ctrl_reset_pending = 0;
+    if (a0_transient_count < 255) { a0_transient_count++; }
+  }
+  if (pin) {
     if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
       bit_true(sys_rt_exec_state, EXEC_CYCLE_START);
     }
@@ -259,6 +398,7 @@ uint8_t system_execute_line(char *line)
             default: return(STATUS_INVALID_STATEMENT);
           }
           report_feedback_message(MESSAGE_RESTORE_DEFAULTS);
+          system_set_reset_source(RESET_SRC_RST);
           mc_reset(); // Force reset to ensure settings are initialized correctly.
           break;
         case 'N' : // Startup lines. [IDLE/ALARM]

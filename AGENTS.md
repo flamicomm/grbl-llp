@@ -1,188 +1,94 @@
-# AGENTS.md - grbl-llp
+# AGENTS.md — grbl-llp
 
-> **⚠️ Regla de oro: Siempre ejecutar `$RST=$` después de flashear.**  
-> EEPROM de Arduinos usados puede contener floats inválidos de Grbl stock/otro fork que lockean el planificador. Ver "Motion Hang Due to Corrupted EEPROM Settings" abajo.
+Firmware Grbl 1.1h para ATmega328P con transporte LLP. **Este archivo es normativo**:
+solo invariantes y comandos. La referencia (protocolo, diferencias con Grbl, pinout,
+issues detallados) vive en `README.md` y `doc/`.
 
-## Build & Upload
+## Regla de oro
+
+**Después de flashear, siempre `$RST=$` y verificar con `$$`.** La EEPROM puede
+traer floats inválidos de otro build y colgar el planificador al primer movimiento.
+Procedimiento y síntomas exactos: `README.md` → "Reseteo de EEPROM al flashear".
+
+## Comandos
 
 ```bash
-pio run -e uno                     # Compile
-pio run -e uno -t upload           # Upload (auto-detect port)
-pio run -e uno -t upload --upload-port /dev/ttyUSB0  # Upload to specific port
+pio run -e uno                                        # compilar UNO
+pio run -e nano                                       # compilar Nano (old bootloader)
+pio run -e uno -t upload --upload-port /dev/ttyUSB0    # subir (ESP en modo transparente)
 ```
 
-## Flash Constraints
+Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 
-- Flash: **91.5%** used (29518/32256 bytes for UNO; 96.1% Nano)
-- RAM: **83.5%** used (1711/2048 bytes; stack margin ~337 B)
-- **Never use `-O0`** — flash overflows. Test changes with `-O0` only temporarily, then revert.
-- Adding debug features may require removing other code to fit.
+```bash
+~/.platformio/packages/toolchain-atmelavr/bin/avr-size --format=avr --mcu=atmega328p \
+  .pio/build/uno/firmware.elf
+```
 
-## Architecture
+## Invariantes
 
-- **grbl-llp**: Grbl 1.1h fork with LLP (Lightweight Link Protocol) transport layer on Arduino Uno (ATmega328P)
-- **esp8266-llp-bridge**: Separate ESP8266 firmware that bridges WiFi (TCP) ↔ UART ↔ grbl-llp
-- LLP runs on UART segment (ESP↔Arduino) only; TCP already guarantees reliability PC↔ESP
-- **Do not use `Serial.print()` on ESP bridge** — Serial is permanently connected to Arduino
+- **Solo `-Os`.** `-O0` desborda la flash: nunca lo dejes en un commit.
+- **Headroom casi nulo.** Cualquier feature nueva exige medir flash y RAM con `avr-size`.
+  No cites porcentajes de memoria: cambian con cada commit; da el comando.
+- **Timer2 está tomado** por el contador de ms de LLP (`src/llp_transport.c`). No lo reuses.
+- **Buffers:** no cambies tamaños sin leer `doc/buffers.md` (hay dependencias entre
+  `LINE_BUFFER_SIZE`, `LLP_RX_PAYLOAD_SIZE` y `TX_BUFFER_SIZE`).
+- **Sin spindle ni coolant:** `spindle_control.c` y `coolant_control.c` son stubs.
+- **Firmware del ESP8266 (fuera de este repo):** nunca uses `Serial.print()`; ese UART
+  está permanentemente conectado al Arduino.
 
-## Key Modifications from Grbl 1.1h
+## Arquitectura (3 capas)
 
-| File | Change |
+1. ESP8266 en modo transparente sobre `/dev/ttyUSB0` ↔ UART 115200 con frames LLP.
+2. `src/llp_transport.c` (bytes, Timer2, flush no bloqueante) + `src/llp_v4.h`
+   (framing v4.0.0, CRC16, canal, byte stuffing).
+3. `src/serial.c` adapta las ISR UART a LLP; `src/protocol.c` consume líneas desframadas.
+
+Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `README.md`.
+
+## Git
+
+- `master` y `dev` son **ramas protegidas**: solo PR. No hagas commits ni amends en ellas.
+- Prefijos de commit que el changelog clasifica: `feat|add|feature|implement|create`,
+  `change|update|refactor|modify|optimize|improve`, `fix|bug|correct|resolve`,
+  `remove|delete|drop`. Cualquier otro prefijo cae en "Unclassified".
+- Hooks de changelog (`post-commit`/`post-merge`): `doc/changelog-workflow.md`.
+
+## Reglas de código (C / AVR)
+
+- C99, sin heap (`malloc` prohibido), sin C++ fuera de los `.cpp` ya existentes.
+- `static` para todo lo privado del módulo; prototipo en el `.h` solo si se exporta.
+- Variables compartidas con una ISR: **`volatile` obligatorio** (ver `serial_rx_buffer_head`).
+- Strings de salida en `PROGMEM` / `printPgmString()`, nunca literales en RAM.
+- Los `src/*.bak` son respaldos: no se editan, no se compilan, no se citan como evidencia.
+- `src/config.h` contiene un bloque comentado con **valores viejos**; la definición activa
+  puede estar en otro header (p. ej. `BLOCK_BUFFER_SIZE` → `src/planner.h`). Verifica con grep.
+
+## Diagnóstico rápido
+
+| Síntoma | Causa más probable | Acción |
 |---|---|---|
-| `serial.c`, `serial.h` | `volatile` on `serial_rx_buffer_head` and `serial_tx_buffer_head` (shared ISR/main) |
-| `llp_transport.c` | Timer2 used for ms counter; non-blocking TX flush (discards on overflow) |
-| `protocol.c` | Keep-alive removed from main loop (2006-06-10); `[KA] ALARM` in critical alarm loop preserved; `#` command with LLP stats; software debounce for A0 reset pin (`system_check_control_reset_debounce()`) |
-| `config.h` | `CHECK_LIMITS_AT_INIT`, `REPORT_FIELD_*`, `ENABLE_BUILD_INFO_WRITE_COMMAND` disabled; `MESSAGE_PROBE_COORDINATES` **enabled** (auto-report after G38.x) |
-| `spindle_control.c` | Stubs only — no spindle I/O (manual 12V spindle) |
-| `coolant_control.c` | Stubs only — no coolant I/O |
-| `gcode.c` | TLO (G43.1/G49) removed; G18/G19 mapped to G17; spindle/coolant execution no-ops |
-| `report.c` | Spindle/coolant removed from `$G` report; RPM settings removed; `report_probe_parameters()` re-enabled with auto-report after G38.x |
+| MCU se cuelga al primer `G0`/`G1` | EEPROM corrupta | `$RST=$` y luego `$$` |
+| `$$` con `-2147483.648` o líneas faltantes | EEPROM corrupta | `$RST=$` |
+| `ALARM:98` | No existe en Grbl (solo 1–10); sospecha corrupción de RAM/stack | revisar margen de stack, no "arreglar" el 98 |
+| No responde nada tras flashear | ESP sin modo transparente o baud incorrecto | `doc/known-issues.md` |
+| Frames LLP perdidos (`td:`/`rd:` crecen) | Buffer chico o flush descartando | `#` + `doc/buffers.md` |
+| `[MSG:RST:SFR]` + `[MSG:RST:SRC:LLP]` | Byte `0x18` (reset) en un frame LLP | revisar ruido UART / comando de emergencia |
+| `[MSG:RST:SFR]` + `[MSG:RST:SRC:A0]` | Pin A0 disparado por EMI (sin botón) | pull-up 10k + 100nF en A0, o desconectar A0 |
+| `[MSG:BOOT:n=...]` tras reiniciarse | Reset de CPU; optiboot limpia `MCUSR`, por eso igual dice `SFR` | comparar `up=` con el último `[DBG:t=...]` (cuelgue vs reset inmediato) |
+| `[MSG:RST:SRC:HARD_LIMIT/SOFT_LIMIT]` | Alarma de límites | revisar recorrido / `$20`/`$21` |
+| `[DBG:... sp=...]` con `sp` muy bajo | Stack profundo | revisar buffers/stack (`doc/buffers.md`) |
+| `[DBG:... ca=...]` creciendo durante un corte | EMI en A0 (pulsos filtrados por el debounce) | pull-up 10 k + 100 nF, desconectar A0 o `DISABLE_CONTROL_RESET_PIN` |
 
-## Buffer Sizes (RAM Optimization)
+## Documentación
 
-| Buffer | File | Value | Saved |
-|---|---|---|---|
-| `TX_BUFFER_SIZE` | `serial.h:31,33` | 128 | 64 B (was 192) |
-| `LINE_BUFFER_SIZE` | `protocol.h:32` | 48 | 32 B (was 80) |
-| `LLP_TX_LINE_BUF_SIZE` | `llp_transport.h:26` | 64 | 16 B (was 80) |
-| `LLP_MAX_PAYLOAD` | `config.h:703` | 64 | 16 B (was 80) |
-| `RX_BUFFER_SIZE` | `serial.h:27` | 80 | — (unchanged) |
-| `BLOCK_BUFFER_SIZE` | `config.h` | 12 | — (unchanged) |
+| Archivo | Contenido |
+|---|---|
+| `README.md` | protocolo LLP, diferencias con Grbl, pinout, compilación, scripts, EEPROM |
+| `doc/buffers.md` | tamaños de buffer, análisis de tráfico, cómo verificarlos |
+| `doc/known-issues.md` | cuelgue por EEPROM, rediagnóstico del "bug Z", ALARM:98, keep-alive |
+| `doc/changelog-workflow.md` | hooks, flujo tras merge de PR |
+| `src/AGENTS.md` | firmware: orden de init, mapa de ISRs, flags de `config.h` |
 
-All sizes chosen based on actual traffic analysis: max G-code command = 21 chars, max TX response = 42 chars (worst-case status report with 3-axis positions ±1234.567).
-
-## `#` Command (LLP Buffer Query)
-
-Host sends `#` as LLP payload → Grbl responds:
-```
-buf:11 rx:150 e:0 t:2 rd:0 td:0
-```
-Fields: `buf:N` (planner blocks), `rx:N` (LLP frames), `e:N` (errors), `t:N` (timeouts), `rd:N` (RX dropped), `td:N` (TX dropped).
-
-## LLP Protocol
-
-- Frame: `[0xAA][0x55][LEN][PAYLOAD...][CRC]`
-- CRC16-CCITT per frame
-- Inter-byte timeout: 2000ms → parser resets
-- TX flush is non-blocking: if TX buffer full, partial frame is discarded and `tx_dropped++` increments
-- LLP stats (`llp_transport_get_stats()`, `llp_transport_reset_stats()`) accessible via `#` command
-
-## Critical Context
-
-- **Current RAM**: 1711/2048 B (83.5%); Flash: 29518/32256 B (91.5% UNO) / 29518/30720 B (96.1% Nano); stack margin ~337 B
-- **ALARM:98 root cause**: Not a standard Grbl alarm code (only 1–10 defined). Most likely RAM corruption from stack overflow in LLP transport layer.
-- **Motion hang root cause**: Corrupted EEPROM settings (see "Motion Hang Due to Corrupted EEPROM Settings" below). `$RST=$` fixes it immediately.
-- **ESP8266 bridge**: Permanent intervening device on `/dev/ttyUSB0`. To upload to the Arduino, the ESP must be in transparent mode (works with `nano` env at 57600 baud). The UNO uses standard 115200 baud for upload.
-- **Protected branches**: `master` and `dev` accept changes only via PR; local git hooks must not attempt commits/amends.
-
-## Known Issues
-
-### Motion Hang Due to Corrupted EEPROM Settings (Critical)
-
-**Symptoms:** MCU freezes completely (no serial response, no keep‑alive) after any `G0`/`G1` motion command — regardless of axis. `$$` shows garbage values like `$11=-2147483.648` (0x80000000 as float), `$110=-2147483.648`, `$121=0.000`, or missing lines (`$101`, `$120`).
-
-**Root cause:** Corrupted EEPROM settings (nan / inf / uninitialised float data) for `max_rate`, `acceleration`, `junction_deviation`, etc. When the planner reads these, it computes invalid step parameters, causing the stepper interrupt or main loop to lock up.
-
-**Discovered:** 2026‑06‑11 — an UNO with seemingly random hangs was fixed entirely by running `$RST=$`. The same board then executed XY and Z moves without issues.
-
-**Fix:**
-```bash
-# Restore all settings to compile‑time defaults:
-echo '$RST=$' | python3 -c "
-import sys; sys.path.insert(0,'scripts')
-import serial, time, llp
-s = serial.Serial('/dev/ttyUSB0', 115200, timeout=3)
-s.setDTR(0); time.sleep(0.1); s.setDTR(1); time.sleep(2)
-s.read_all()  # drain init
-frame = llp.encode(b'\$RST=\$\n')
-s.write(frame); time.sleep(1); s.close()
-"
-```
-After `$RST=$`, the MCU resets automatically. Verify with `$$` — all values should be reasonable. Then reconfigure per‑axis settings (`$100`–`$132`) for your machine.
-
-**Prevention:** Always verify settings with `$$` after flashing a new board. Old EEPROM data from a previous Grbl build or a different unit can contain invalid floats that silently corrupt the planner.
-
-### ~~Z-axis Hang~~ (Rediagnosed: same EEPROM corruption bug)
-
-Previously thought to be a Grbl core pin‑contention bug. Symptoms matched the corrupted EEPROM pattern exactly:
-- MCU stops after first Z movement (or ANY axis — Z was just the first tested)
-- `$$` showed garbage values identical to the corrupted settings bug
-
-**2026‑06‑11 resolution:** After `$RST=$` cleared the EEPROM garbage, Z‑axis motion (`G0 Z2 F200`) worked perfectly — even on a bare UNO with no CNC shield, where this was previously reported as "unfixable." The supposed "Z‑axis bug" was the same corrupted EEPROM issue all along. Retest if a board exhibits this symptom — `$RST=$` before any other debugging.
-
-### Keep-Alive in Alarm Loop
-
-The critical limit alarm loop (`protocol_exec_rt_system`) has a minimal keep-alive (`[KA] ALARM\r\n`). This is intentional to keep flash usage low. Full stats were removed to save space.
-
-## Debug Features
-
-Keep-alive is compiled in by default. To disable:
-1. Remove or comment the keep-alive block in `protocol.c` main loop (~180-197)
-2. Remove `llp_stats_t` and `llp_transport_get_ms()` from `protocol.c` if no longer referenced
-
-### Software Debounce (A0 Reset Pin)
-
-The control reset pin (A0) now has software debounce via `system_check_control_reset_debounce()` in `protocol_execute_realtime()`. Default debounce: 20ms (`CONTROL_RESET_DEBOUNCE_MS` in `config.h`). Filters EMI transients and mechanical button bounce. To disable, set `CONTROL_RESET_DEBOUNCE_MS` to 0 (not recommended).
-
-### Debug Keep-Alive (DEBUG_KEEPALIVE)
-
-Uncomment `#define DEBUG_KEEPALIVE` in `config.h` to enable a 10-second debug keep-alive that prints `[DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...]` via `protocol_execute_realtime()`. Cost: ~382 B flash, 4 B RAM. Use to diagnose MCU hangs during operation.
-
-## Changelog
-
-`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/) format.
-
-### Manual generation
-
-```bash
-# From repo root:
-bash scripts/generate-changelog.sh v1.0.1 v1.2.0
-```
-
-This appends formatted entries to `CHANGELOG.md` based on commit messages.
-Always review and edit the result before committing.
-
-### Automatic generation (git hooks)
-
-Two hooks in `.githooks/` auto-generate changelog entries:
-
-| Hook | Trigger | Behaviour |
-|---|---|---|
-| `post-commit` | Local `git commit` | Updates CHANGELOG.md on feature branches; preview-only on master/dev |
-| `post-merge` | `git pull` or `git merge` | Updates CHANGELOG.md locally (does not amend — branches may be protected) |
-
-Since **`master` and `dev` are protected** (PR-only merges), the hooks:
-- Run **locally** on your machine when you pull the merged PR (`git pull` triggers `post-merge`)
-- Update `CHANGELOG.md` in the working tree without committing
-- On protected branches, instruct you to create a new PR with the changelog change
-- On feature branches, you can `git add && git commit` the changelog directly
-
-**Enable hooks:**
-```bash
-git config core.hooksPath .githooks
-chmod +x .githooks/post-commit .githooks/post-merge
-```
-
-**Workflow example after a PR merge:**
-```bash
-git checkout dev && git pull
-# post-merge fires → CHANGELOG.md updated locally
-git checkout -b update-changelog
-git add CHANGELOG.md && git commit -m "Update CHANGELOG.md"
-git push origin update-changelog
-# create PR → dev
-```
-
-## Minimum Hardware Setup
-
-- Arduino Uno (ATmega328P)
-- CNC Shield v3.x (optional)
-- No spindle control (`VARIABLE_SPINDLE` disabled in `config.h`)
-- No coolant (minimal CNC config)
-- Low speed: < 1000mm/min for PCB prototyping
-
-## Related Documentation
-
-- `README.md` — LLP protocol overview and differences from Grbl standard
-- `src/config.h` — compile-time config, `#define DEFAULTS_GENERIC`, `CPU_MAP_ATMEGA328P`
-- `src/cpu_map.h` — pin mapping (STEP_BIT, DIRECTION_BIT, LIMIT_BIT per axis)
+No escribas en `AGENTS.md`/`README.md` datos volátiles (líneas, porcentajes, versiones):
+da el comando que los obtiene.

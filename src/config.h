@@ -678,20 +678,9 @@
 /* ---------------------------------------------------------------------------------------
    LLP TRANSPORT LAYER CONFIGURATION:
 
-   LLP_MAX_PAYLOAD defines the maximum payload size for LLP frames. This must be large
-   enough to hold the longest G-code line (typically LINE_BUFFER_SIZE chars) plus the
-   FinalNode layer byte. Default is 96 bytes (80 chars + margin).
-   NOTE: Increasing this value increases RAM usage significantly on ATmega328P.
-   #define LLP_MAX_PAYLOAD 96
-
-   LLP_FRAME_TIMEOUT_MS defines the inter-byte timeout in milliseconds before the
-   parser resets. Default is 2000ms.
-   #define LLP_FRAME_TIMEOUT_MS 2000
-
-   LLP_ENABLE_STATS defines whether parser-level statistics are tracked. Disabled
-   by default in v3.1.0 to save 12 bytes of RAM per parser instance. grbl-llp uses
-   its own transport-level counters instead.
-   #define LLP_ENABLE_STATS 0
+   There is nothing to override here. The wire format and its defaults live in
+   src/llp_v4.h; the grbl adapter's own knobs live in src/llp_transport.h
+   (LLP_RX_PAYLOAD_SIZE, LLP_RX_TIMEOUT_MS, LLP_TX_LINE_BUF_SIZE, LLP_TX_CHANNEL).
 
    TX_BUFFER_SIZE must be large enough to hold a complete LLP frame for the longest
    response. The default of 160 should be sufficient for most status reports.
@@ -699,19 +688,29 @@
    #define TX_BUFFER_SIZE 160
 */
 
-// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=... sp=... u=...] every 10s
-// via protocol_execute_realtime(). Helps diagnose MCU hangs during operation.
-// Flash cost: ~382 B (with SPI=29776, UNO 92.3%, Nano 96.9%). RAM cost: 4 B.
-// #define DEBUG_KEEPALIVE
+// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=...
+// sp=... u=... re=... rt=... rd=... td=... ca=...] every 10s via
+// protocol_execute_realtime(). Helps diagnose MCU hangs, LLP traffic problems and
+// EMI on the control pins during a job (ca = A0 pulses filtered by the debounce).
+// Measure the flash cost with avr-size before enabling it on a full build.
+#define DEBUG_KEEPALIVE
 
 // Software debounce for control reset pin (A0). Filters EMI transients and mechanical
 // button bounce. 20ms is sufficient for most mechanical buttons (1-10ms bounce) and
-// EMI transients (<1ms). Increase if false triggers persist.
-#define CONTROL_RESET_DEBOUNCE_MS 20  // ms
+// EMI transients (<1ms). Increased to 100ms for machines with a brushed spindle and
+// a floating A0 pin (no abort button), where longer EMI bursts are common.
+#define CONTROL_RESET_DEBOUNCE_MS 100  // ms
 
-// LLP transport overrides (must be defined before llp_protocol.h is included)
-#define LLP_MAX_PAYLOAD 64
-#define LLP_ENABLE_STATS 0
+// Uncomment on machines with **no abort button** wired to A0 (Reset/Abort of the
+// CNC shield). A floating A0 next to a brushed spindle picks up EMI and can hold
+// the pin LOW long enough to pass the debounce, resetting the MCU mid-job. This
+// removes A0 from the control input mask entirely: no pin-change interrupt, no
+// reset. Feed hold (A1) and cycle start (A2) keep working.
+// #define DISABLE_CONTROL_RESET_PIN
+
+// LLP transport configuration lives in src/llp_transport.h (line buffer,
+// payload capacity, timeout) and src/llp_v4.h (library defaults). Nothing to
+// override here.
 
 // Paste CPU_MAP definitions here.
 

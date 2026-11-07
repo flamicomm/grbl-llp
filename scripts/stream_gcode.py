@@ -131,7 +131,7 @@ class StatusMonitor:
         self.sent += 1
         self._pending_response = True
         cmd = cmd.strip()
-        frame = llp.encode(cmd.encode('utf-8'))
+        frame = llp.encode(0, cmd.encode('utf-8'))
         ser.write(frame)
         ser.flush()
         if self._log:
@@ -167,7 +167,7 @@ def send_frame(ser, text, log=None, force_no_newline=False):
     if not force_no_newline and not text.endswith('\n'):
         text = text + '\n'
     
-    frame = llp.encode(text.encode('utf-8'))
+    frame = llp.encode(0, text.encode('utf-8'))
     ser.write(frame)
     ser.flush()
     if log:
@@ -182,16 +182,12 @@ def read_responses(ser, parser, timeout_sec, log=None):
         if ser.in_waiting:
             raw = ser.read(ser.in_waiting)
             for byte in raw:
-                result = parser.process_byte(byte, int(time.time() * 1000))
-                if result == 1:
-                    payload = parser.get_final_payload()
-                    try:
-                        text = payload.decode('utf-8', errors='replace')
-                    except Exception:
-                        text = str(payload)
-                    payloads.append(text)
-                    if log:
-                        log.log_rx(repr(text))
+                for event in parser.feed(byte, int(time.time() * 1000)):
+                    if event[0] == "frame":
+                        text = event[2].decode('utf-8', errors='replace')
+                        payloads.append(text)
+                        if log:
+                            log.log_rx(repr(text))
         time.sleep(0.02)
     return payloads
 
@@ -383,7 +379,7 @@ def stream_gcode(filepath, port, baud):
 
     with serial.Serial(port, baud, timeout=1) as ser:
         time.sleep(2.5)
-        parser = llp.LLPParser()
+        parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
         read_responses(ser, parser, timeout_sec=1.5, log=log)
         reset_arduino(ser, parser, log=log)
 

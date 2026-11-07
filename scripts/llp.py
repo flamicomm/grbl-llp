@@ -1,313 +1,246 @@
 #!/usr/bin/env python3
+# LLP wire format 4.0.0 — vendored copy of llp-protocol/scripts/llp_v4.py
+# Used by scripts/stream_gcode.py (encode + Parser). Keep in sync with the library.
+# The authoritative reference lives in the llp-protocol repo.
+"""LLP wire format 4.0.0 — Python reference implementation.
+
+Small and literal on purpose: this file is the executable form of
+``docs/SPEC-v4.md`` and the cross-language reference used to generate and
+self-check the conformance vectors (``scripts/gen_vectors_v4.py``).
+
+Wire format 4.0.0:
+
+    [0xAA][0x55][LEN][CHANNEL][PAYLOAD...][CRC_L][CRC_H]
+
+  - LEN     : payload length, 0..255 (1 byte)
+  - CHANNEL : application routing, 0..255 (1 byte)
+  - PAYLOAD : raw application bytes, LEN bytes
+  - CRC16   : CRC16-CCITT-FALSE (poly 0x1021, init 0xFFFF, no reflection,
+              no final XOR) over MAGIC + LEN + CHANNEL + PAYLOAD, little-endian
+  - Stuffing: every 0xAA after the magic is sent as 0xAA 0x00
+
+Time is caller-supplied and reduced modulo 65536 (the C parser stores a
+16-bit timestamp). Timeouts are wrap-safe and must be <= 32767 ms.
 """
-llp.py - LLP (Layered Link Protocol) v3.0.0 Python implementation
 
-Encodes and decodes LLP frames for the ESP8266 LLP Bridge integration tests.
+from __future__ import annotations
 
-Wire format (transport frame):
-  [0xAA][0x55][LEN_L][LEN_H][PAYLOAD...][CRC_L][CRC_H]
+MAGIC = b"\xaa\x55"
+MAGIC1 = 0xAA
+MAGIC2 = 0x55
+CRC_INIT = 0xFFFF
+MAX_PAYLOAD = 255
+DEFAULT_TIMEOUT_MS = 2000
 
-Byte stuffing: every 0xAA byte in LEN, PAYLOAD or CRC is written as 0xAA 0x00.
-An unexpected 0xAA 0x55 sequence inside a frame signals a resync event.
+# Parser states
+WAIT_MAGIC1, WAIT_MAGIC2, READ_LEN, READ_CHANNEL, READ_PAYLOAD, READ_CRC_L, READ_CRC_H = range(7)
 
-Payload format (layer chain):
-  [LAYER_ID][META_LEN][METADATA...] ... [0x00][RAW APPLICATION DATA]
-
-Layer ID 0x00 (FinalNode) signals end of layer chain, raw bytes follow.
-"""
-
-import struct
-import time
-import binascii
-from typing import Optional
-
-# Protocol constants
-LLP_MAGIC_1 = 0xAA
-LLP_MAGIC_2 = 0x55
-LLP_LAYER_ID_FINAL = 0x00
-LLP_MAX_PAYLOAD = 128
-LLP_FRAME_TIMEOUT_MS = 2000
+# Error codes (identical values in the C API)
+ERR_CRC = "LLP_ERR_CRC"
+ERR_LEN = "LLP_ERR_LEN"
+ERR_TIMEOUT = "LLP_ERR_TIMEOUT"
+ERR_SYNC = "LLP_ERR_SYNC"
 
 
-def crc16_ccitt(data: bytes) -> int:
-    """
-    Calculate CRC16-CCITT checksum over a byte string.
-    Uses binascii.crc_hqx which implements CRC-16-CCITT (polynomial 0x1021, init 0xFFFF).
-    """
-    return binascii.crc_hqx(data, 0xFFFF)
+# --------------------------------------------------------------------------
+# CRC
+# --------------------------------------------------------------------------
+def crc16_update(crc: int, byte: int) -> int:
+    """CRC16-CCITT bitwise update (poly 0x1021, init 0xFFFF)."""
+    crc ^= (byte & 0xFF) << 8
+    for _ in range(8):
+        if crc & 0x8000:
+            crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+        else:
+            crc = (crc << 1) & 0xFFFF
+    return crc
 
 
-def build_final_payload(raw_data: bytes) -> bytes:
-    """
-    Wrap raw application data in a FinalNode layer.
-    Returns: [0x00][RAW_DATA...]
-    """
-    return bytes([LLP_LAYER_ID_FINAL]) + raw_data
+def crc16(data: bytes, crc: int = CRC_INIT) -> int:
+    for byte in data:
+        crc = crc16_update(crc, byte)
+    return crc
 
 
-def build_frame(llp_payload: bytes) -> bytes:
-    """
-    Encode an LLP payload into a wire-format frame with byte stuffing.
-    Returns: [0xAA][0x55][LEN_L][LEN_H][STUFFED_PAYLOAD...][CRC_L][CRC_H]
-    """
-    if len(llp_payload) > LLP_MAX_PAYLOAD:
-        raise ValueError(f"Payload too large: {len(llp_payload)} > {LLP_MAX_PAYLOAD}")
-
-    # Calculate CRC over: magic + length + payload (all unstuffed)
-    length_le = struct.pack('<H', len(llp_payload))
-    crc_data = bytes([LLP_MAGIC_1, LLP_MAGIC_2]) + length_le + llp_payload
-    crc = crc16_ccitt(crc_data)
-
-    # Build output frame
-    output = bytearray()
-    output.append(LLP_MAGIC_1)
-    output.append(LLP_MAGIC_2)
-
-    for byte in length_le:
-        output.append(byte)
-        if byte == LLP_MAGIC_1:
-            output.append(0x00)
-
-    for byte in llp_payload:
-        output.append(byte)
-        if byte == LLP_MAGIC_1:
-            output.append(0x00)
-
-    crc_le = struct.pack('<H', crc)
-    for byte in crc_le:
-        output.append(byte)
-        if byte == LLP_MAGIC_1:
-            output.append(0x00)
-
-    return bytes(output)
+def _crc_seed() -> int:
+    return crc16_update(crc16_update(CRC_INIT, MAGIC1), MAGIC2)
 
 
-def encode(raw_data: bytes) -> bytes:
-    """
-    Convenience function: encode raw data as a complete LLP frame.
-    Combines build_final_payload() and build_frame().
-    """
-    llp_payload = build_final_payload(raw_data)
-    return build_frame(llp_payload)
+# --------------------------------------------------------------------------
+# Encoder
+# --------------------------------------------------------------------------
+def encode(channel: int, payload: bytes) -> bytes:
+    """Encode one frame (channel, payload) -> wire bytes."""
+    if not 0 <= len(payload) <= MAX_PAYLOAD:
+        raise ValueError("payload length out of range 0..255")
+    if not 0 <= channel <= 0xFF:
+        raise ValueError("channel out of range 0..255")
+
+    body = bytes([len(payload), channel]) + payload
+    crc = crc16(body, _crc_seed())
+
+    frame = bytearray(MAGIC)
+    for byte in body + bytes([crc & 0xFF, (crc >> 8) & 0xFF]):
+        if byte == MAGIC1:
+            frame.append(MAGIC1)
+            frame.append(0x00)
+        else:
+            frame.append(byte)
+    return bytes(frame)
 
 
-class LLPParser:
-    """
-    Stateful LLP frame parser. Feed raw bytes via process_byte() and
-    call get_final_payload() after process_byte() returns 1.
-    """
+def frame_size(payload_len: int) -> int:
+    """Worst-case on-wire size for `payload_len` payload bytes (all stuffed)."""
+    return 2 + 2 * (1 + 1 + payload_len) + 2 * 2
 
-    def __init__(self):
+
+# --------------------------------------------------------------------------
+# Decoder
+# --------------------------------------------------------------------------
+class Parser:
+    """Byte-at-a-time parser. Events are returned in detection order."""
+
+    def __init__(self, capacity: int = MAX_PAYLOAD, timeout_ms: int = DEFAULT_TIMEOUT_MS):
+        if not 0 <= capacity <= MAX_PAYLOAD:
+            raise ValueError("capacity out of range 0..255")
+        self.capacity = capacity
+        self.timeout_ms = timeout_ms
         self.reset()
 
-    def reset(self):
-        self.state = 0  # 0=WAIT_MAGIC1, 1=WAIT_MAGIC2, 2=LEN_L, 3=LEN_H, 4=PAYLOAD, 5=CRC_L, 6=CRC_H
-        self.escape_pending = False
-        self.payload_len = 0
+    def reset(self) -> None:
+        self.state = WAIT_MAGIC1
+        self.escape_pending = 0
+        self.length = 0
+        self.channel = 0
         self.payload = bytearray()
+        self.crc_calculated = _crc_seed()
         self.crc_received = 0
-        self.crc_calculated = 0xFFFF
         self.last_byte_time = 0
-        self.error_code = None
         self.frames_ok = 0
         self.frames_error = 0
         self.timeouts = 0
 
-    def process_byte(self, byte: int, current_ms: Optional[int] = None) -> int:
-        """
-        Feed one raw byte into the parser.
+    # -- internals -------------------------------------------------------
+    def _start_frame(self) -> None:
+        self.state = READ_LEN
+        self.escape_pending = 0
+        self.length = 0
+        self.channel = 0
+        self.payload = bytearray()
+        self.crc_calculated = _crc_seed()
 
-        Returns:
-          0 = incomplete frame (still building)
-          1 = complete frame (call get_final_payload() to get it)
-         -1 = error or resync
-        """
-        if current_ms is None:
-            current_ms = int(time.time() * 1000)
+    def _fail(self, code: str, events: list) -> list:
+        self.frames_error += 1
+        events.append(("error", code))
+        self.state = WAIT_MAGIC1
+        self.escape_pending = 0
+        self.payload = bytearray()
+        return events
 
-        # Timeout check (not in magic states)
-        if self.state not in (0, 1):
-            if self.last_byte_time > 0 and (current_ms - self.last_byte_time) > LLP_FRAME_TIMEOUT_MS:
-                self.error_code = 'TIMEOUT'
+    # -- public ----------------------------------------------------------
+    def feed(self, byte: int, now_ms: int) -> list[tuple]:
+        """Feed one byte. Returns a list of events:
+
+        ("frame", channel, payload) | ("error", CODE) | ("timeout",)
+        """
+        events: list[tuple] = []
+        byte &= 0xFF
+
+        if self.state != WAIT_MAGIC1:
+            if (now_ms - self.last_byte_time) & 0xFFFF > self.timeout_ms:
                 self.timeouts += 1
-                self.reset()
-                self.last_byte_time = current_ms
-                if byte == LLP_MAGIC_1:
-                    self.state = 1
-                return -1
-
-        self.last_byte_time = current_ms
-
-        # Handle escape sequences (not in magic states)
-        if self.state not in (0, 1):
-            if self.escape_pending:
-                self.escape_pending = False
-                if byte == LLP_MAGIC_2:
-                    self.error_code = 'SYNC'
-                    self.frames_error += 1
-                    self.crc_calculated = 0xFFFF
-                    self.crc_calculated = binascii.crc_hqx(
-                        bytes([LLP_MAGIC_1, LLP_MAGIC_2]), self.crc_calculated
-                    )
-                    self.payload = bytearray()
-                    self.state = 2
-                    return -1
-                elif byte == 0x00:
-                    byte = LLP_MAGIC_1
-                else:
-                    self.error_code = 'SYNC'
-                    self.frames_error += 1
-                    self.reset()
-                    return -1
-            elif byte == LLP_MAGIC_1:
-                self.escape_pending = True
-                return 0
-
-        # State machine
-        if self.state == 0:  # WAIT_MAGIC1
-            if byte == LLP_MAGIC_1:
-                self.state = 1
-            return 0
-
-        if self.state == 1:  # WAIT_MAGIC2
-            if byte == LLP_MAGIC_2:
-                self.crc_calculated = 0xFFFF
-                self.crc_calculated = binascii.crc_hqx(
-                    bytes([LLP_MAGIC_1, LLP_MAGIC_2]), self.crc_calculated
-                )
-                self.state = 2
-            elif byte == LLP_MAGIC_1:
-                self.state = 1
-            else:
-                self.state = 0
-            return 0
-
-        if self.state == 2:  # READ_LEN_L
-            self.payload_len = byte
-            self.crc_calculated = binascii.crc_hqx(bytes([byte]), self.crc_calculated)
-            self.state = 3
-            return 0
-
-        if self.state == 3:  # READ_LEN_H
-            self.payload_len |= byte << 8
-            self.crc_calculated = binascii.crc_hqx(bytes([byte]), self.crc_calculated)
-            if self.payload_len > LLP_MAX_PAYLOAD:
-                self.error_code = 'PAYLOAD_LEN'
                 self.frames_error += 1
-                self.reset()
-                return -1
-            self.payload = bytearray()
-            self.state = 4 if self.payload_len > 0 else 5
-            return 0
+                events.append(("error", ERR_TIMEOUT))
+                self.state = WAIT_MAGIC1
+                self.escape_pending = 0
+                self.payload = bytearray()
+                self.last_byte_time = now_ms & 0xFFFF
+                if byte == MAGIC1:
+                    self.state = WAIT_MAGIC2
+                return events
 
-        if self.state == 4:  # READ_PAYLOAD
+        self.last_byte_time = now_ms & 0xFFFF
+
+        if self.state not in (WAIT_MAGIC1, WAIT_MAGIC2):
+            if self.escape_pending:
+                self.escape_pending = 0
+                if byte == MAGIC2:
+                    # Unescaped magic inside a frame: resync.
+                    self.frames_error += 1
+                    events.append(("error", ERR_SYNC))
+                    self._start_frame()
+                    return events
+                if byte == 0x00:
+                    byte = MAGIC1
+                else:
+                    return self._fail(ERR_SYNC, events)
+            elif byte == MAGIC1:
+                self.escape_pending = 1
+                return events
+
+        if self.state == WAIT_MAGIC1:
+            if byte == MAGIC1:
+                self.state = WAIT_MAGIC2
+
+        elif self.state == WAIT_MAGIC2:
+            if byte == MAGIC2:
+                self._start_frame()
+            elif byte != MAGIC1:
+                self.state = WAIT_MAGIC1
+
+        elif self.state == READ_LEN:
+            if byte > self.capacity:
+                return self._fail(ERR_LEN, events)
+            self.length = byte
+            self.crc_calculated = crc16_update(self.crc_calculated, byte)
+            self.state = READ_CHANNEL
+
+        elif self.state == READ_CHANNEL:
+            self.channel = byte
+            self.crc_calculated = crc16_update(self.crc_calculated, byte)
+            self.state = READ_PAYLOAD if self.length else READ_CRC_L
+
+        elif self.state == READ_PAYLOAD:
             self.payload.append(byte)
-            self.crc_calculated = binascii.crc_hqx(bytes([byte]), self.crc_calculated)
-            if len(self.payload) == self.payload_len:
-                self.state = 5
-            return 0
+            self.crc_calculated = crc16_update(self.crc_calculated, byte)
+            if len(self.payload) == self.length:
+                self.state = READ_CRC_L
 
-        if self.state == 5:  # READ_CRC_L
+        elif self.state == READ_CRC_L:
             self.crc_received = byte
-            self.state = 6
-            return 0
+            self.state = READ_CRC_H
 
-        if self.state == 6:  # READ_CRC_H
+        elif self.state == READ_CRC_H:
             self.crc_received |= byte << 8
             if self.crc_received != self.crc_calculated:
-                self.error_code = 'CHECKSUM'
-                self.frames_error += 1
-                self.reset()
-                return -1
+                return self._fail(ERR_CRC, events)
             self.frames_ok += 1
-            self.state = 0
-            self.escape_pending = False
-            return 1
+            events.append(("frame", self.channel, bytes(self.payload)))
+            self.state = WAIT_MAGIC1
+            self.payload = bytearray()
 
-        # Should not reach here
-        self.reset()
-        return -1
-
-    def get_final_payload(self) -> bytes:
-        """
-        Extract raw application data from the last parsed frame.
-        Returns bytes after the FinalNode (0x00) marker.
-        """
-        raw_payload = bytes(self.payload)
-        pos = 0
-        while pos < len(raw_payload):
-            layer_id = raw_payload[pos]
-            if layer_id == LLP_LAYER_ID_FINAL:
-                return raw_payload[pos + 1:]
-            pos += 1
-        return b''
+        return events
 
 
-def decode(raw_bytes: bytes, parser: Optional[LLPParser] = None):
-    """
-    Decode a sequence of raw bytes into LLP payloads.
-
-    Args:
-        raw_bytes: raw bytes received from TCP/Serial
-        parser: existing LLPParser instance to reuse (creates new if None)
-
-    Returns:
-        Tuple of (list_of_payloads, parser_instance)
-    """
-    if parser is None:
-        parser = LLPParser()
-
-    payloads = []
-    for byte in raw_bytes:
-        result = parser.process_byte(byte)
-        if result == 1:
-            payloads.append(parser.get_final_payload())
-    return payloads, parser
-
-
-# =============================================================================
-# Command line tool for debugging
-# =============================================================================
-
-def main():
+# --------------------------------------------------------------------------
+# Tiny CLI for manual checks: echo "aa55..." | python3 llp_v4.py
+# --------------------------------------------------------------------------
+def _main() -> int:
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: python3 llp.py encode <text>  OR  python3 llp.py decode <hex>")
-        print("       python3 llp.py parse <hex>")
-        sys.exit(1)
+    if len(sys.argv) > 1 and sys.argv[1] == "encode":
+        channel = int(sys.argv[2]) if len(sys.argv) > 2 else 0
+        payload = sys.argv[3].encode() if len(sys.argv) > 3 else b""
+        print(encode(channel, payload).hex())
+        return 0
 
-    cmd = sys.argv[1]
-
-    if cmd == 'encode':
-        data = sys.argv[2].encode('utf-8')
-        frame = encode(data)
-        print("Encoded frame (hex):", frame.hex().upper())
-
-    elif cmd == 'parse':
-        hex_str = sys.argv[2].replace(' ', '').replace(':', '')
-        raw_bytes = bytes.fromhex(hex_str)
-        parser = LLPParser()
-        for i, byte in enumerate(raw_bytes):
-            result = parser.process_byte(byte)
-            if result == 1:
-                payload = parser.get_final_payload()
-                print(f"Frame {parser.frames_ok}: payload={payload} ({len(payload)} bytes)")
-                print(f"  Raw payload (hex): {bytes(parser.payload).hex().upper()}")
-            elif result == -1:
-                print(f"Byte {i}: error={parser.error_code}")
-
-    elif cmd == 'decode':
-        hex_str = sys.argv[2].replace(' ', '').replace(':', '')
-        raw_bytes = bytes.fromhex(hex_str)
-        payloads, _ = decode(raw_bytes)
-        for p in payloads:
-            print("Payload:", p.decode('utf-8', errors='replace'))
-
-    else:
-        print(f"Unknown command: {cmd}")
-        sys.exit(1)
+    data = bytes.fromhex(sys.stdin.read().strip())
+    parser = Parser()
+    for index, byte in enumerate(data):
+        for event in parser.feed(byte, index):
+            print(event)
+    return 0
 
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    raise SystemExit(_main())

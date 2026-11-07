@@ -367,6 +367,10 @@ void mc_reset()
 {
   // Only this function can set the system reset. Helps prevent multiple kill calls.
   if (bit_isfalse(sys_rt_exec_state, EXEC_RESET)) {
+    // If the caller did not annotate a specific source, record a generic one.
+    if (last_reset_source == RESET_SRC_NONE) {
+      last_reset_source = RESET_SRC_OTHER;
+    }
     system_set_exec_state_flag(EXEC_RESET);
 
     // Kill spindle and coolant.

@@ -24,11 +24,16 @@
 
 
 // The number of linear motions that can be in the plan at any give time
+// 8 (down from 12) to free 184 bytes of static RAM for the stack: the free RAM
+// left for the stack on the ATmega328P was being overflowed by the deepest call
+// chain (mc_line -> protocol_execute_realtime -> report/print) plus ISR nesting,
+// which silently overwrote .noinit. At the feeds used here (< 500 mm/min) the
+// shorter planner buffer does not affect motion smoothness. See doc/buffers.md.
 #ifndef BLOCK_BUFFER_SIZE
   #ifdef USE_LINE_NUMBERS
-    #define BLOCK_BUFFER_SIZE 12
+    #define BLOCK_BUFFER_SIZE 8
   #else
-    #define BLOCK_BUFFER_SIZE 12
+    #define BLOCK_BUFFER_SIZE 8
   #endif
 #endif
 

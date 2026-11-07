@@ -165,6 +165,37 @@ extern volatile uint8_t sys_rt_exec_accessory_override; // Global realtime execu
   extern volatile uint8_t sys_rt_exec_debug;
 #endif
 
+// Reset source diagnostics. Set by the code that requests a soft reset so
+// main.c can report *why* the MCU re-initialized instead of a bare "SFR".
+#define RESET_SRC_NONE        0
+#define RESET_SRC_OTHER       1
+#define RESET_SRC_LLP         2  // CMD_RESET (0x18) received inside an LLP frame
+#define RESET_SRC_A0          3  // Control reset pin A0 (debounced) triggered
+#define RESET_SRC_RST         4  // $RST command
+#define RESET_SRC_HARD_LIMIT  5  // Hard limit alarm
+#define RESET_SRC_SOFT_LIMIT  6  // Soft limit alarm
+#define RESET_SRC_HOMING      7  // Homing failure/reset
+
+extern volatile uint8_t last_reset_source;
+// A0 reset/abort pulses filtered by the debounce (EMI indicator, "ca=" in the
+// debug keepalive). Saturates at 255.
+extern volatile uint8_t a0_transient_count;
+void system_set_reset_source(uint8_t src);
+
+// Boot diagnostics kept in .noinit (survive hardware resets). Call
+// system_diag_boot_init() once at the very start of main(): it returns 1 when
+// the previous life's RAM was preserved (reset, not power-on).
+uint8_t system_diag_boot_init(void);
+void system_diag_mark_loop(unsigned long now);
+uint16_t system_diag_boot_count(void);
+unsigned long system_diag_last_loop_ms(void);
+
+// Stack watermark (see system.c): paint the unused RAM at boot, then scan it to
+// get the peak stack usage of the previous life.
+uint16_t system_diag_stack_limit(void);
+uint16_t system_diag_stack_peak(void);
+void system_diag_stack_paint(void);
+
 // Initialize the serial protocol
 void system_init();
 
