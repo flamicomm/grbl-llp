@@ -412,9 +412,15 @@ uint8_t system_execute_line(char *line)
             }
             break;
           } else { // Store startup line [IDLE Only] Prevents motion during ALARM.
-            if (sys.state != STATE_IDLE) { return(STATUS_IDLE_ERROR); } // Store only when idle.
-            helper_var = true;  // Set helper_var to flag storing method.
-            // No break. Continues into default: to read remaining command characters.
+            #if N_STARTUP_LINE == 0
+              // Startup blocks are compiled out: reject the write with a status the host
+              // can read, instead of spending seconds on an EEPROM write that is never used.
+              return(STATUS_SETTING_READ_FAIL);
+            #else
+              if (sys.state != STATE_IDLE) { return(STATUS_IDLE_ERROR); } // Store only when idle.
+              helper_var = true;  // Set helper_var to flag storing method.
+              // No break. Continues into default: to read remaining command characters.
+            #endif
           }
         default :  // Storing setting methods [IDLE/ALARM]
           if(!read_float(line, &char_counter, &parameter)) { return(STATUS_BAD_NUMBER_FORMAT); }
