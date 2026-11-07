@@ -10,6 +10,7 @@
 */
 
 #include "grbl.h"
+#include "llp_v4_rel.h"
 
 static llp4_parser_t llp_rx_parser;
 static uint8_t llp_rx_payload[LLP_RX_PAYLOAD_SIZE];
@@ -25,6 +26,18 @@ static volatile uint16_t llp_rx_timeout_count = 0;
 static volatile uint16_t llp_rx_dropped_count = 0;
 static volatile uint16_t llp_tx_dropped_count = 0;
 static volatile uint16_t llp_rx_raw_bytes = 0;
+
+/* Profile R1 (reliable command channel) state.
+ *
+ * The UART ISR classifies each complete frame by channel; the ACK itself is
+ * emitted from the main loop (llp_transport_poll) because the UART ring has a
+ * single writer. Window 1 means at most one ACK can be pending. */
+static llp4_rel_rx_t llp_rel_rx;
+static volatile uint8_t llp_ack_pending = 0;
+static volatile uint8_t llp_ack_seq = 0;
+static volatile uint16_t llp_rx_command_count = 0;
+static volatile uint16_t llp_rx_busy_count = 0;
+static volatile uint16_t llp_tx_ack_count = 0;
 
 /* Maximum time to wait for room in the TX ring before dropping a frame. */
 #define LLP_TX_WAIT_MS 10u
@@ -67,6 +80,9 @@ void llp_transport_init(void)
 {
     llp4_parser_init(&llp_rx_parser, llp_rx_payload,
                      (uint8_t)sizeof(llp_rx_payload), LLP_RX_TIMEOUT_MS);
+    llp4_rel_rx_init(&llp_rel_rx);
+    llp_ack_pending = 0;
+    llp_ack_seq = 0;
     llp_tx_line_idx = 0;
 
     TCCR2A = 0;
@@ -90,6 +106,18 @@ static void llp_rx_buffer_write(uint8_t data)
     } else {
         llp_rx_dropped_count++;
     }
+}
+
+/* Free bytes in grbl's line ring. Read from the UART ISR: `head` is written
+ * only there and `tail` only by the main loop, both as single bytes. */
+static uint8_t llp_rx_ring_free(void)
+{
+    uint8_t head = serial_rx_buffer_head;
+    uint8_t tail = serial_rx_buffer_tail;
+    if (head >= tail) {
+        return (uint8_t)(RX_RING_BUFFER - head + tail - 1u);
+    }
+    return (uint8_t)(tail - head - 1u);
 }
 
 static void llp_process_payload(const uint8_t *payload, uint16_t len)
@@ -188,6 +216,52 @@ static void llp_process_payload(const uint8_t *payload, uint16_t len)
     }
 }
 
+/* Profile R1: a reliable command frame, payload = [SEQ][DATA...].
+ *
+ * Runs in the UART ISR. The data is accepted atomically: if it does not fit in
+ * grbl's line ring, the sequence number is not consumed and no ACK is sent, so
+ * the sender retransmits later (llp-spec RELIABILITY.md §6.1). */
+static void llp_process_command(const uint8_t *payload, uint16_t len)
+{
+    uint8_t seq;
+    uint16_t data_len;
+    uint16_t i;
+
+    if (len < 1) {
+        return;
+    }
+
+#ifdef LLP_TEST_DROP_CH1
+    {   /* Fault injection: simulate one command frame lost on the wire. */
+        static uint8_t test_counter = 0;
+        if (++test_counter >= LLP_TEST_DROP_CH1) {
+            test_counter = 0;
+            return;   /* no delivery, no ACK */
+        }
+    }
+#endif
+
+    seq = payload[0];
+    data_len = (uint16_t)(len - 1u);
+
+    if (data_len > (uint16_t)llp_rx_ring_free()) {
+        llp_rx_busy_count++;
+        return;   /* defer: the retransmission will retry */
+    }
+
+    if (llp4_rel_rx_accept(&llp_rel_rx, seq)) {
+        for (i = 0; i < data_len; i++) {
+            llp_rx_buffer_write(payload[1 + i]);
+        }
+        llp_rx_command_count++;
+    }
+
+    /* New frame or duplicate: always acknowledge, so a lost ACK cannot
+     * deadlock the sender. */
+    llp_ack_seq = seq;
+    llp_ack_pending = 1;
+}
+
 void llp_transport_rx_byte(uint8_t byte)
 {
     int rc;
@@ -201,7 +275,16 @@ void llp_transport_rx_byte(uint8_t byte)
         uint8_t len = llp_rx_parser.length;
         if (len > 0) {
             llp_rx_frame_count++;
-            llp_process_payload(llp_rx_payload, len);
+            if (llp_rx_parser.channel == LLP4_REL_CH_COMMAND) {
+                llp_process_command(llp_rx_payload, len);
+            } else if (llp_rx_parser.channel == LLP4_REL_CH_HELLO) {
+                /* New session (the sender rebooted or reconnected): its SEQ
+                 * restarts, so the dedup state must not survive. */
+                llp4_rel_rx_init(&llp_rel_rx);
+            } else if (llp_rx_parser.channel == LLP_RX_CHANNEL) {
+                llp_process_payload(llp_rx_payload, len);
+            }
+            /* Other channels are reserved: ignored, never an error. */
         }
     } else if (rc < 0) {
         llp_rx_error_count++;
@@ -223,43 +306,84 @@ void llp_transport_tx_byte(uint8_t byte)
     }
 }
 
-void llp_transport_tx_flush(void)
+/* Emit one complete frame. All-or-nothing: the worst case is reserved in the
+ * ring first, so the wire never sees a partial frame. Main-loop context only.
+ * Returns 0 when the frame did not fit; the caller decides whether that is a
+ * drop (line output) or a retry (ACK). */
+static int llp_tx_emit(uint8_t channel, const uint8_t *payload, uint8_t len)
 {
-    uint8_t idx = llp_tx_line_idx;
     llp4_tx_t tx;
     uint16_t needed;
     uint16_t wait_start;
     uint8_t i;
+
+    if (len == 0) {
+        return 0;
+    }
+
+    needed = (uint16_t)llp4_frame_size(len);
+    if (needed > LLP_TX_RING_FREE_MAX) {
+        return 0;
+    }
+
+    wait_start = (uint16_t)llp_transport_get_ms();
+    while (llp_tx_ring_free() < needed) {
+        UCSR0B |= (1 << UDRIE0);
+        if ((uint16_t)((uint16_t)llp_transport_get_ms() - wait_start) >= LLP_TX_WAIT_MS) {
+            return 0;
+        }
+    }
+
+    llp4_tx_begin(&tx, channel, len, llp_tx_sink, NULL);
+    for (i = 0; i < len; i++) {
+        llp4_tx_byte(&tx, payload[i]);
+    }
+    llp4_tx_end(&tx);
+
+    UCSR0B |= (1 << UDRIE0);
+    return 1;
+}
+
+void llp_transport_tx_flush(void)
+{
+    uint8_t idx = llp_tx_line_idx;
 
     if (idx == 0) {
         return;
     }
     llp_tx_line_idx = 0;
 
-    needed = (uint16_t)llp4_frame_size(idx);
-    if (needed > LLP_TX_RING_FREE_MAX) {
+    if (!llp_tx_emit(LLP_TX_CHANNEL, llp_tx_line_buf, idx)) {
         llp_tx_dropped_count++;
+    }
+}
+
+void llp_transport_poll(void)
+{
+    uint8_t seq;
+
+    if (!llp_ack_pending) {
         return;
     }
 
-    /* Reserve the worst case first: the frame is queued completely or not at
-     * all, so the wire never sees a partial frame. */
-    wait_start = (uint16_t)llp_transport_get_ms();
-    while (llp_tx_ring_free() < needed) {
-        UCSR0B |= (1 << UDRIE0);
-        if ((uint16_t)((uint16_t)llp_transport_get_ms() - wait_start) >= LLP_TX_WAIT_MS) {
-            llp_tx_dropped_count++;
+#ifdef LLP_TEST_DROP_ACK
+    {   /* Fault injection: simulate one ACK lost on the wire. */
+        static uint8_t test_counter = 0;
+        if (++test_counter >= LLP_TEST_DROP_ACK) {
+            test_counter = 0;
+            llp_ack_pending = 0;
             return;
         }
     }
+#endif
 
-    llp4_tx_begin(&tx, LLP_TX_CHANNEL, idx, llp_tx_sink, NULL);
-    for (i = 0; i < idx; i++) {
-        llp4_tx_byte(&tx, llp_tx_line_buf[i]);
+    seq = llp_ack_seq;
+    if (llp_tx_emit((uint8_t)LLP4_REL_CH_ACK, &seq, 1)) {
+        llp_tx_ack_count++;
+        if (llp_ack_seq == seq) {
+            llp_ack_pending = 0;
+        }
     }
-    llp4_tx_end(&tx);
-
-    UCSR0B |= (1 << UDRIE0);
 }
 
 void llp_transport_tx_reset(void)
@@ -277,6 +401,10 @@ void llp_transport_get_stats(llp_stats_t *stats)
     stats->rx_dropped = llp_rx_dropped_count;
     stats->tx_dropped = llp_tx_dropped_count;
     stats->rx_raw_bytes = llp_rx_raw_bytes;
+    stats->rx_commands = llp_rx_command_count;
+    stats->rx_duplicates = llp_rel_rx.duplicates;
+    stats->rx_busy = llp_rx_busy_count;
+    stats->tx_acks = llp_tx_ack_count;
     SREG = sreg;
 }
 
@@ -290,6 +418,10 @@ void llp_transport_reset_stats(void)
     llp_rx_dropped_count = 0;
     llp_tx_dropped_count = 0;
     llp_rx_raw_bytes = 0;
+    llp_rx_command_count = 0;
+    llp_rx_busy_count = 0;
+    llp_tx_ack_count = 0;
+    llp_rel_rx.duplicates = 0;
     SREG = sreg;
 }
 

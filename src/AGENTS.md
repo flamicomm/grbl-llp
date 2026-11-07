@@ -62,6 +62,19 @@ Los números de línea de esta tabla son volátiles: confírmalos con
 | stats | `src/llp_transport.c:270` | `llp_transport_get_stats()` |
 | comando `#` | `src/protocol.c:101-116` | imprime `buf/rx/e/t/rd/td` |
 
+### Perfil R1 (invariantes)
+
+- El ACK se emite **solo desde el main loop** (`llp_transport_poll()`, llamado en
+  `protocol_execute_realtime()`). La ISR únicamente deja `llp_ack_pending`; el
+  ring de TX tiene un solo escritor.
+- Un frame `CH1` se acepta **atómicamente**: si el payload no entra completo en
+  el ring de línea, no se consume el `SEQ` y no se ACKea. Nunca escribir medio
+  comando.
+- Un `SEQ` repetido se **re-ACKea y se descarta** (`llp4_rel_rx_accept()`): es lo
+  que evita ejecutar dos veces un movimiento cuando se pierde el ACK.
+- El canal 0 (stream grbl) y los realtime no cambian: la clasificación es por
+  `channel` y el resto se ignora sin error.
+
 ## Cuidados en `src/`
 
 - **`src/*.bak` no son fuente** (`config.h.bak`, `protocol.c.bak`, `planner.c.bak`,

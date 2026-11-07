@@ -227,6 +227,10 @@ void protocol_execute_realtime()
   protocol_exec_rt_system();
   if (sys.suspend) { protocol_exec_rt_suspend(); }
 
+  // Profile R1 ACK, if the UART ISR queued one. Kept in the main loop so the
+  // UART ring keeps a single writer.
+  llp_transport_poll();
+
   #ifdef DEBUG_KEEPALIVE
   {
     static unsigned long last_dbg_ka = 0;
@@ -273,6 +277,14 @@ void protocol_execute_realtime()
         // Peak stack usage since the last boot (watermark, ISRs included).
         printPgmString(PSTR(" pk="));
         print_uint32_base10(system_diag_stack_peak());
+        printPgmString(PSTR("]\r\n"));
+        // Profile R1 health: dup > 0 means the sender had to retransmit.
+        printPgmString(PSTR("[DBG:ack="));
+        printInteger(stats.tx_acks);
+        printPgmString(PSTR(" dup="));
+        printInteger(stats.rx_duplicates);
+        printPgmString(PSTR(" busy="));
+        printInteger(stats.rx_busy);
         printPgmString(PSTR("]\r\n"));
       }
     }

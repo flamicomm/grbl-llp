@@ -142,12 +142,55 @@ python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /
 - Continúa tras `error:` (ej: M6 no soportado → `error:20`)
 - Detecta cuelgues MCU y aborta con info de línea/comando
 
+## Canal de comandos confiable (perfil R1)
+
+El wire format v4 garantiza que no llegue una trama corrupta, pero **no** que una
+trama llegue. Si se pierde un comando, el host queda esperando el `ok` para
+siempre, y reintentar a ciegas puede ejecutar el movimiento dos veces.
+
+El perfil **R1** (normativo en [`llp-spec`](https://github.com/flamicomm/llp-spec/blob/main/docs/RELIABILITY.md),
+implementación en `src/llp_v4_rel.h`) agrega una capa confiable sobre dos canales:
+
+```
+COMMAND (canal 1):  [SEQ][DATA...]      host -> MCU
+ACK     (canal 2):  [SEQ]               MCU  -> host
+```
+
+- **Ventana 1**: un comando en vuelo. El host no manda el siguiente hasta el ACK.
+- **Dedup**: el MCU guarda `last_seq`; un `SEQ` repetido se re-ACKea y **se
+  descarta** (`llp4_rel_rx_accept()`), así un ACK perdido nunca ejecuta dos veces.
+- **Aceptación atómica**: si los bytes no entran completos en el ring de línea
+  (`RX_BUFFER_SIZE = 80`), **no se consume el `SEQ` ni se ACKea**; la
+  retransmisión lo reintenta después. La presión de buffer se convierte en
+  retransmisión, no en pérdida.
+- **ACK desde el main loop** (`llp_transport_poll()`, llamado en
+  `protocol_execute_realtime()`): el ring de TX tiene un solo escritor, la ISR
+  solo marca `llp_ack_pending`.
+- El stream grbl normal (`ok`, status, `[DBG]`, `[MSG]`) sigue por el **canal 0**
+  sin cambios, y los realtime (`?`, `!`, `~`, `0x18`) también.
+
+El keep-alive reporta la salud del enlace en una cuarta línea:
+
+```
+[DBG:ack=1234 dup=0 busy=0]
+```
+
+`dup` > 0 significa que hubo retransmisiones (ACK perdido) y que el dedup las
+absorbió; `busy` cuenta comandos diferidos por falta de espacio en el ring.
+
+Para el banco hay inyección de fallas (nunca en una máquina cortando):
+`#define LLP_TEST_DROP_CH1 20` tira 1 comando de cada 20 y
+`#define LLP_TEST_DROP_ACK 20` tira 1 ACK de cada 20. El arnés
+`scripts/test_r1.py` habla CH1/CH2 directo por el puerto serie y verifica
+entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
+
 ## Scripts de prueba
 
 | Script | Descripción |
 |---|---|
 | `scripts/stream_gcode.py` | Streaming G-code real vía LLP |
 | `scripts/llp.py` | Librería LLP v4 (encode/decode/parser) |
+| `scripts/test_r1.py` | Banco del perfil R1 (ACK, dedup, retransmisión) por puerto serie |
 | `test_short.gcode` | G-code corto para pruebas rápidas |
 | `test_large.gcode` | G-code real de PCB (FlatCAM, ~5000 líneas) |
 

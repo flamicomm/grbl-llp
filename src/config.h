@@ -708,6 +708,13 @@
 // reset. Feed hold (A1) and cycle start (A2) keep working.
 // #define DISABLE_CONTROL_RESET_PIN
 
+// Profile R1 fault injection (integration test only, never on a cutting machine).
+// LLP_TEST_DROP_CH1=N drops one command frame in N: the sender must retransmit
+// it and the job must continue. LLP_TEST_DROP_ACK=N drops one ACK in N: the
+// sender retransmits, the receiver must deduplicate and re-ACK.
+// #define LLP_TEST_DROP_CH1 20
+// #define LLP_TEST_DROP_ACK 20
+
 // LLP transport configuration lives in src/llp_transport.h (line buffer,
 // payload capacity, timeout) and src/llp_v4.h (library defaults). Nothing to
 // override here.
