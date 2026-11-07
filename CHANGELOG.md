@@ -5,6 +5,21 @@ All notable changes to grbl-llp are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `ENABLE_ARC_SUPPORT` y `ENABLE_NONMODAL_EXTRA` en `src/config.h`: guardas de compilación
+  para G2/G3 y para los no-modales extendidos (G10, G28/G30, G28.1/G30.1, G53). Reactivarlas
+  restaura el binario anterior byte por byte (medido con `avr-size`).
+
+### Changed
+- **Presupuesto de flash**: el build de esta máquina apaga arcos (~3220 B), no-modales
+  extendidos (~500 B) y startup blocks (~290 B). UNO pasa de 97.0% a 84.5%
+  (27258/32256 B); Nano a 88.7% (27258/30720 B). El G-code que genera el host no cambia:
+  usa G0/G1, G38.x y G92.
+- `$RST=*`, `$RST=$` y `$RST=#` se conservan: apagarlos ahorra <10 B y `$RST=$` es parte
+  del procedimiento de reseteo de EEPROM post-flash.
+
 ## [1.1.0] - 2026-06-10
 
 ### Added

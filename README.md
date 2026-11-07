@@ -62,8 +62,8 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
-| Flash usado | ~93% (Grbl original) | **91.5%** UNO / **96.1%** Nano (optimizado para PCB) |
-| RAM usada | ~80% | **83.5%** |
+| Flash usado | ~93% (Grbl original) | **84.5%** UNO / **88.7%** Nano (optimizado para PCB) |
+| RAM usada | ~80% | **67.2%** |
 
 ## Archivos agregados/modificados clave
 
@@ -205,9 +205,30 @@ entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
 
 ## Flash y RAM
 
-- **Flash**: 91.5% (29518/32256 bytes UNO) / 96.1% (29518/30720 bytes Nano) con `-Os`
-- **RAM**: 83.5% (1711/2048 bytes)
+Medido con `avr-size` sobre el build actual (`pio run -e uno` / `-e nano`, `-Os`):
+
+- **UNO**: 84.5% (27258/32256 bytes) · **Nano**: 88.7% (27258/30720 bytes)
+- **RAM**: 67.2% (1377/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
+
+El espacio libre no es casual: `src/config.h` tiene switches para compilar fuera G-code
+que esta máquina no usa. Los ahorros están medidos con `avr-size` (ver el bloque
+"Flash budget" del propio `config.h`):
+
+| Switch | Ahorro | Qué desactiva |
+|---|---:|---|
+| `ENABLE_ARC_SUPPORT` (apagado) | ~3220 B | G2/G3: parsing, `mc_arc()` y libm (`atan2`/`sqrt`) |
+| `ENABLE_NONMODAL_EXTRA` (apagado) | ~500 B | G10, G28/G30, G28.1/G30.1 y G53 (G92 se conserva) |
+| `N_STARTUP_LINE 0` | ~290 B | startup blocks y comando `$N` |
+| `DEBUG_KEEPALIVE` (encendido) | ~750 B | líneas `[DBG:...]` cada 10 s |
+
+`DEBUG_KEEPALIVE` está encendido a propósito para la validación del perfil R1; apagarlo
+deja el UNO en ~82% de flash. `$RST=*`, `$RST=$` y `$RST=#` se conservan: el procedimiento
+de reseteo de EEPROM de más abajo depende de `$RST=$`.
+
+Con `ENABLE_ARC_SUPPORT` apagado, una línea G2/G3 responde `error:20` (no hay
+interpolación de arcos). El host no las genera: pcb2gcode no emite G02/G03, el generador
+de base de madera emite G0/G1 y el autolevel usa G0/G1/G38.3.
 
 ## Importante: Reseteo de EEPROM al flashear
 

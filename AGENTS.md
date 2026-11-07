@@ -28,8 +28,10 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 ## Invariantes
 
 - **Solo `-Os`.** `-O0` desborda la flash: nunca lo dejes en un commit.
-- **Headroom casi nulo.** Cualquier feature nueva exige medir flash y RAM con `avr-size`.
-  No cites porcentajes de memoria: cambian con cada commit; da el comando.
+- **Headroom: ~4.9 KB en UNO / ~3.4 KB en Nano.** Es el resultado de apagar las features
+  opcionales de `src/config.h` (`ENABLE_ARC_SUPPORT`, `ENABLE_NONMODAL_EXTRA`,
+  `N_STARTUP_LINE 0`). Antes de agregar código, medí flash y RAM con `avr-size`;
+  no cites porcentajes de memoria: cambian con cada commit, da el comando.
 - **Timer2 está tomado** por el contador de ms de LLP (`src/llp_transport.c`). No lo reuses.
 - **Buffers:** no cambies tamaños sin leer `doc/buffers.md` (hay dependencias entre
   `LINE_BUFFER_SIZE`, `LLP_RX_PAYLOAD_SIZE` y `TX_BUFFER_SIZE`).
