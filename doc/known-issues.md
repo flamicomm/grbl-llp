@@ -85,7 +85,7 @@ reinicio de CPU imprime, antes del banner de Grbl:
 
 ```
 [MSG:BOOT:n=12 m=ok up=1234567]
-[MSG:BOOT:stk=331 lim=471]
+[MSG:BOOT:stk=331 lim=671]
 [MSG:BOOT:src=NONE ca=0]
 [MSG:BOOT:vcc=5.01]
 ```
