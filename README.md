@@ -180,16 +180,23 @@ absorbió; `busy` cuenta comandos diferidos por falta de espacio en el ring.
 
 En Python, `scripts/llp_rel.py` es la copia vendorizada de la referencia y
 `scripts/llp_link.py` el enlace de alto nivel que usan `stream_gcode.py` y
-`test_r1.py`. Si el firmware no ACKea el primer comando (versión sin R1), el
-enlace lo avisa y sigue por el canal 0, así el mismo script sirve para ambos
-firmwares. `python3 scripts/llp_link.py --self-test` ejercita entrega limpia,
-ACK perdido, comando perdido y auto-detección contra un MCU simulado.
+`test_r1.py`. El enlace solo declara "sin R1" cuando los primeros
+`FALLBACK_CONFIRM_COMMANDS` comandos no se ACKean **y** nunca hubo un ACK en la
+sesión; ahí reenvía esos comandos pendientes por el canal 0 y sigue por ahí, así
+el mismo script sirve para ambos firmwares. Un enlace que ya ACKeó nunca se
+degrada por comandos sueltos perdidos. `python3 scripts/llp_link.py --self-test`
+ejercita entrega limpia, ACK perdido, comando perdido, auto-detección, boot lento
+y drenaje, contra un MCU simulado.
 
 Para el banco hay inyección de fallas (nunca en una máquina cortando):
 `#define LLP_TEST_DROP_CH1 20` tira 1 comando de cada 20 y
 `#define LLP_TEST_DROP_ACK 20` tira 1 ACK de cada 20. El arnés
 `scripts/test_r1.py` habla CH1/CH2 directo por el puerto serie y verifica
 entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
+Abrir el puerto resetea el MCU y el banner de arranque puede tardar ~3,9 s
+(F-013/F-014), así que antes del handshake el arnés **drena** lo que llega
+durante `--wait-boot` (4,5 s por defecto) e informa cuántos bytes descartó; ese
+conteo es también evidencia del replay del CH340 (F-018).
 
 ## Scripts de prueba
 
