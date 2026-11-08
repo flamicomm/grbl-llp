@@ -72,10 +72,13 @@ static uint16_t measure_vcc_mv(void)
   while ((ADCSRA & (1 << ADSC)) && guard) { guard--; }
   uint16_t adc = ADC;
   ADCSRA = 0; // nobody else uses the ADC; leave it off
+  // ADIF may be left set (it is cleared by writing 1): a future ADC user must
+  // clear it before enabling ADIE.
 
-  // guard == 0 means the ADC timed out. A usable reading is 1..1022: 0 or full
-  // scale means the bandgap is out of range at this Vcc (or a bad read).
-  if (!guard || (uint16_t)(adc - 1) >= 1022) { return 0; }
+  // guard == 0 means the ADC timed out. A usable reading is 200..1022 => Vcc <=
+  // ~5.63 V with BANDGAP_MV=1100; this rejects both the uint16_t wrap (adc <= 17)
+  // and physically impossible rails.
+  if (!guard || (uint16_t)(adc - 200) > 822) { return 0; }
   return (uint16_t)((uint32_t)BANDGAP_MV * 1024UL / adc);
 }
 
