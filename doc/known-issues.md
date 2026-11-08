@@ -86,6 +86,7 @@ reinicio de CPU imprime, antes del banner de Grbl:
 ```
 [MSG:BOOT:n=12 m=ok up=1234567]
 [MSG:BOOT:src=NONE ca=0]
+[MSG:BOOT:vcc=5.01]
 ```
 
 | Campo | Significado |
@@ -95,6 +96,13 @@ reinicio de CPU imprime, antes del banner de Grbl:
 | `up` | Uptime (ms) del **último pasaje del main loop** de la vida anterior |
 | `src` | Último origen anotado (`NONE` si nadie llamó a `mc_reset()` antes del reset) |
 | `ca` | Pulsos de A0 filtrados, preservados entre resets |
+| `vcc` | Vcc estimado por el bandgap interno de 1.1 V; `?` si la lectura no es válida |
+
+`vcc` se calcula como `Vcc = BANDGAP_MV × 1024 / ADC` (MUX del bandgap, referencia
+AVcc, prescaler /128). `BANDGAP_MV` (en `src/config.h`) es nominal: el bandgap real
+está entre 1.0 y 1.2 V, así que sin calibrarlo contra un multímetro el valor tiene
+~±10 % de error. Alcanza para ver si un reset coincidió con una caída de tensión
+(brown-out), no para medir la fuente con precisión.
 
 Cómo leerlo:
 
