@@ -198,6 +198,11 @@ class Link:
         self.stats.unacked += 1
         self._unacked_commands.append(data)
 
+        if len(self._unacked_commands) >= self.fallback_confirm:
+            # An ACK can still be sitting in the OS buffer after the sender
+            # expired; read it now so `acks_seen` sees it before deciding.
+            self.pump(0)
+
         if self.acks_seen > 0:
             # The link already proved it speaks R1 (even a late, orphan ACK
             # counts): a lost command is a lost command, never a reason to
@@ -218,8 +223,10 @@ class Link:
 
         # No ACK was ever received in the session, not even an orphan one: the
         # firmware ignores CH1 (no Profile R1), so none of these pending commands
-        # ran. An R1 firmware whose ACKs were all lost is already excluded by the
-        # acks_seen guard above.
+        # ran. An R1 firmware whose whole ACK path is dead looks identical from
+        # here; resending on CH0 may execute a command twice. That residual risk
+        # is what F-014 accepts, and why two commands (not one) are required to
+        # confirm the fallback.
         self.reliable = False
         self._log("WARN", "firmware without Profile R1: falling back to channel 0")
         for pending in self._unacked_commands:
@@ -417,7 +424,8 @@ def _self_test() -> int:
 
     print("== enlace ya probado (nunca degrada) ==")
     port = FakePort()
-    link = Link(port)
+    log = _Log()
+    link = Link(port, log=log)
     link.hello()
     result = link.send("ok")
     check(f"comando inicial ACKeado ({result})", result == "acked")
@@ -428,6 +436,8 @@ def _self_test() -> int:
     check(f"segunda pérdida sin ACK ({second})", second == "unacked")
     check("el enlace no se degrada", link.reliable is True)
     check("sin fallback", link.stats.fallback_ch0 == 0)
+    check("el ERROR loguea el SEQ que falló",
+          any("SEQ 1 not acknowledged" in event for event in log.events))
 
     print("== ACK tardío (prueba de R1) ==")
     port = FakePort(support_r1=False)
