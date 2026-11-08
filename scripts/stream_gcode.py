@@ -4,9 +4,14 @@ stream_gcode.py - Stream G-code to grbl-llp via LLP over serial.
 
 Usage:
     python3 stream_gcode.py <gcode_file> [--port /dev/ttyUSB0] [--baud 115200]
+                            [--wait-boot 4.5]
 
 The script sends each G-code line wrapped in LLP frames to the Arduino,
 waits for 'ok' or 'error:' responses, and reports any failures.
+
+Opening the CH340 resets the MCU (F-013): after opening the port and again
+after the explicit 'ctrl-x' reset, the script drains the boot banner for
+--wait-boot seconds instead of reading it through the LLP parser.
 
 Note: Grbl-LLP uses LLP frames as command delimiters instead of '\\n'.
       This script ensures each command is terminated with '\\n' so the
@@ -174,7 +179,12 @@ def send_frame(ser, text, log=None, force_no_newline=False):
     that should not have '\\n' appended.
     """
     if _ACTIVE_LINK is not None:
-        return _ACTIVE_LINK.send(text, force_no_newline)
+        result = _ACTIVE_LINK.send(text, force_no_newline)
+        if result == "unacked" and log:
+            # No print: an unacknowledged line is retried by the link and the
+            # stream keeps going; printing here would flood the console.
+            log.log_event(f"UNACKED command: {text.strip()!r}")
+        return result
 
     if not force_no_newline and not text.endswith('\n'):
         text = text + '\n'
@@ -264,19 +274,23 @@ def check_buffer(ser, parser, log=None):
     return None
 
 
-def reset_arduino(ser, parser, log=None):
-    """Send ctrl-x reset and wait for startup."""
+def reset_arduino(ser, parser, wait_boot, log=None):
+    """Send ctrl-x reset and drain the boot banner it triggers."""
     print("[RESET] Sending ctrl-x (0x18) to reset Arduino...")
     if log:
         log.log_event("Sending ctrl-x (0x18) reset")
     # force_no_newline: 0x18 is real-time; a trailing '\n' would reach grbl as
     # an empty line and produce a spurious 'ok'.
     send_frame(ser, "\x18", log=log, force_no_newline=True)
-    time.sleep(0.5)
-    resps = read_responses(ser, parser, timeout_sec=2.0, log=log)
+    # The reset reboots the MCU: drain the banner without parsing it, then read
+    # a short tail in case something landed right at the end of the window.
+    dropped = llp_link.drain_port(ser, wait_boot)
+    print(f"  boot tras reset: {dropped} bytes descartados")
+    if log:
+        log.log_event(f"Reset drain: {dropped} bytes in {wait_boot:g}s")
+    resps = read_responses(ser, parser, timeout_sec=0.3, log=log)
     for r in resps:
         print(f"  {r.strip()}")
-    time.sleep(1.0)
 
 
 def drain_responses(ser, parser, status_mon, drain_ms=100, log=None):
@@ -367,7 +381,7 @@ def wait_for_gcode_response(ser, parser, status_mon, line_num, cmd,
     return got_ok, got_error, error_count, last_keepalive
 
 
-def stream_gcode(filepath, port, baud):
+def stream_gcode(filepath, port, baud, wait_boot=4.5):
     """Main streaming logic."""
     with open(filepath, 'r') as f:
         lines = f.readlines()
@@ -395,10 +409,11 @@ def stream_gcode(filepath, port, baud):
     log.log_event(f"Port: {port} @ {baud}")
 
     with serial.Serial(port, baud, timeout=1) as ser:
-        time.sleep(2.5)
         parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
-        read_responses(ser, parser, timeout_sec=1.5, log=log)
-        reset_arduino(ser, parser, log=log)
+        dropped = llp_link.drain_port(ser, wait_boot)
+        print(f"[BOOT] {dropped} bytes descartados en {wait_boot:g}s")
+        log.log_event(f"Boot drain: {dropped} bytes in {wait_boot:g}s")
+        reset_arduino(ser, parser, wait_boot, log=log)
 
         # Profile R1: commands travel on channel 1 and are retransmitted until
         # the MCU acknowledges them. A lost frame no longer aborts the stream.
@@ -616,13 +631,17 @@ def main():
     parser.add_argument('gcode_file', help='Path to G-code file to stream')
     parser.add_argument('--port', default=DEFAULT_PORT, help='Serial port (default: /dev/ttyUSB0)')
     parser.add_argument('--baud', type=int, default=DEFAULT_BAUD, help='Baud rate (default: 115200)')
+    parser.add_argument('--wait-boot', type=float, default=4.5,
+                        help='seconds to drain after opening the port and after '
+                             'the ctrl-x reset: opening the CH340 resets the MCU '
+                             'and the boot banner takes ~3.9 s (F-013/F-014)')
     args = parser.parse_args()
 
     if not os.path.isfile(args.gcode_file):
         print(f"ERROR: File not found: {args.gcode_file}")
         sys.exit(1)
 
-    alive = stream_gcode(args.gcode_file, args.port, args.baud)
+    alive = stream_gcode(args.gcode_file, args.port, args.baud, args.wait_boot)
     sys.exit(0 if alive else 1)
 
 

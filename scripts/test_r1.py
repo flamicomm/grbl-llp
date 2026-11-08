@@ -143,6 +143,12 @@ class Bench:
                 attempts += 1
                 self.retransmits += 1
             elif action == rel.TX_EXHAUSTED:
+                # Release the window so a later command can start, and burn this
+                # SEQ: if any ACK was ever seen, the MCU may have consumed it and
+                # only lost the ACK, so reusing it would be deduped silently.
+                # The CH0 replay only runs when no ACK was ever seen.
+                self.sender.abort()
+                self.seq = (self.seq + 1) & 0xFF
                 return False, attempts
             self.pump(0.005)
         return True, attempts

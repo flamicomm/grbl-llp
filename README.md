@@ -137,6 +137,10 @@ python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /
 
 **Características:**
 - Envía cada línea como frame LLP, espera `ok` o `error:`
+- Abrir el puerto serie resetea el MCU (F-013), así que el script **drena** el
+  banner de arranque (`--wait-boot`, 4,5 s por defecto) en vez de leerlo por el
+  parser; lo mismo hace después del reset `ctrl-x`, y ambos drenajes informan
+  cuántos bytes descartaron
 - Reset automático (`ctrl-x`) al inicio
 - Salta M0/M1/M2/M30 (paradas intencionales)
 - Continúa tras `error:` (ej: M6 no soportado → `error:20`)
