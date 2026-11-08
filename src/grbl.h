@@ -23,7 +23,11 @@
 
 // Grbl versioning system
 #define GRBL_VERSION "1.1h"
-#define GRBL_VERSION_BUILD "20260628"
+#ifndef GRBL_VERSION_BUILD
+// Fallback when the build has no git metadata (source tarball); platformio.ini
+// injects the short commit through scripts/build_hash.py.
+#define GRBL_VERSION_BUILD "local"
+#endif
 
 // Define standard libraries used by Grbl.
 #include <avr/io.h>

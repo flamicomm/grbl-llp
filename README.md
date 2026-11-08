@@ -127,6 +127,9 @@ pio run -e nano                                         # Compilar
 pio run -e nano -t upload --upload-port /dev/ttyUSB0  # Subir
 ```
 
+`$I` muestra el SHA corto del commit con el que se compiló (`$I` → `[VER:1.1h.<sha7>:]`)
+y `local` si el árbol no tiene `.git` (tarball). Lo inyecta `scripts/build_hash.py`.
+
 ## Streaming de G-code
 
 El script `scripts/stream_gcode.py` envía archivos G-code completos al Arduino vía LLP:
