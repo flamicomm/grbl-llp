@@ -383,6 +383,11 @@ def wait_for_gcode_response(ser, parser, status_mon, line_num, cmd,
 
 def stream_gcode(filepath, port, baud, wait_boot=4.5):
     """Main streaming logic."""
+    global _ACTIVE_LINK
+    # A second invocation in the same process must not route through the Link
+    # of the previous run (and its already-closed port).
+    _ACTIVE_LINK = None
+
     with open(filepath, 'r') as f:
         lines = f.readlines()
 
@@ -417,7 +422,6 @@ def stream_gcode(filepath, port, baud, wait_boot=4.5):
 
         # Profile R1: commands travel on channel 1 and are retransmitted until
         # the MCU acknowledges them. A lost frame no longer aborts the stream.
-        global _ACTIVE_LINK
         _ACTIVE_LINK = llp_link.Link(ser, log=log)
         _ACTIVE_LINK.hello()
         read_responses(ser, parser, timeout_sec=0.2, log=log)

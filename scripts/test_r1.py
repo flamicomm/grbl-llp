@@ -61,6 +61,10 @@ class Bench:
         self.parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
         self.sender = rel.Sender()
         self.seq = 0
+        # Last SEQ the MCU actually acknowledged. `seq` also advances when a
+        # command exhausts its retries, so T2/T3 must not derive the duplicate
+        # SEQ from it: after a failed T1 that SEQ may never have reached the MCU.
+        self.last_acked_seq = 0
         self.acks: list[int] = []
         self.oks = 0
         self.text: list[str] = []
@@ -103,7 +107,8 @@ class Bench:
             seq = payload[0]
             self.acks.append(seq)
             if self.sender.on_ack(seq):
-                self.seq = (self.seq + 1) & 0xFF
+                self.last_acked_seq = seq & 0xFF
+                self.seq = (self.last_acked_seq + 1) & 0xFF
             return
         if channel != 0:
             return
@@ -146,7 +151,6 @@ class Bench:
                 # Release the window so a later command can start, and burn this
                 # SEQ: if any ACK was ever seen, the MCU may have consumed it and
                 # only lost the ACK, so reusing it would be deduped silently.
-                # The CH0 replay only runs when no ACK was ever seen.
                 self.sender.abort()
                 self.seq = (self.seq + 1) & 0xFF
                 return False, attempts
@@ -205,7 +209,7 @@ def main() -> int:
                      f"10 comandos -> 10 ACK y 10 ok (ok={link.oks})")
 
         print("== T2: ACK perdido (duplicado del mismo SEQ) ==")
-        last_seq = (link.seq - 1) & 0xFF
+        last_seq = link.last_acked_seq
         link.acks.clear()
         link.oks = 0
         link.write_frame(rel.CH_COMMAND, rel.command_payload(last_seq, b"G4 P0\n"))
