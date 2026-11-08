@@ -63,13 +63,14 @@ def drain_port(ser, seconds: float) -> int:
     """
     discarded = 0
     deadline = time.monotonic() + seconds
-    while True:
+    while seconds <= 0 or time.monotonic() < deadline:
         waiting = getattr(ser, "in_waiting", 0)
         if waiting:
             discarded += len(ser.read(waiting))
-        if seconds <= 0 or time.monotonic() >= deadline:
-            return discarded
+        if seconds <= 0:
+            break
         time.sleep(0.002)
+    return discarded
 
 
 @dataclass
@@ -89,6 +90,8 @@ class Link:
     commands, with no ACK at all in the session, that confirm the firmware has
     no Profile R1 before falling back to channel 0. One lost command on a
     freshly opened port only means the MCU is still booting (F-013/F-014).
+    `acks_seen` counts well-formed CH_ACK frames even when they arrive too late
+    to close a window, because an orphan ACK still proves the firmware speaks R1.
     """
 
     def __init__(self, ser, log=None, *,
@@ -107,6 +110,7 @@ class Link:
         self.reliable = reliable
         self.fallback_confirm = fallback_confirm
         self.seq = 0
+        self.acks_seen = 0
         self.stats = LinkStats()
         self._pending: List[str] = []
         self._unacked_commands: List[bytes] = []
@@ -148,6 +152,7 @@ class Link:
             return
         _, channel, payload = event
         if channel == rel.CH_ACK and len(payload) == 1:
+            self.acks_seen += 1
             if self.sender.on_ack(payload[0]):
                 self.stats.acked += 1
                 self.seq = (self.seq + 1) & 0xFF
@@ -185,6 +190,7 @@ class Link:
             return "sent"
 
         self.stats.commands += 1
+        failed_seq = self.seq
         if self._send_reliable(data):
             self._unacked_commands.clear()
             return "acked"
@@ -192,26 +198,28 @@ class Link:
         self.stats.unacked += 1
         self._unacked_commands.append(data)
 
-        if self.stats.acked > 0:
-            # The link already proved it speaks R1: a lost command is a lost
-            # command, never a reason to degrade the whole session (F-014).
-            # Fallback is impossible from now on, so keep nothing queued.
+        if self.acks_seen > 0:
+            # The link already proved it speaks R1 (even a late, orphan ACK
+            # counts): a lost command is a lost command, never a reason to
+            # degrade the whole session (F-014). Fallback is impossible from
+            # now on, so keep nothing queued.
             self._unacked_commands.clear()
-            self._log("ERROR", f"command SEQ {self.seq} not acknowledged")
+            self._log("ERROR", f"command SEQ {failed_seq} not acknowledged")
             return "unacked"
 
         if len(self._unacked_commands) < self.fallback_confirm:
             self._log(
                 "WARN",
-                f"command SEQ {self.seq} not acknowledged; waiting for "
+                f"command SEQ {failed_seq} not acknowledged; waiting for "
                 f"confirmation ({len(self._unacked_commands)}/"
                 f"{self.fallback_confirm})",
             )
             return "unacked"
 
-        # Enough consecutive misses with no ACK ever received: older firmware,
-        # no R1 on CH1. Resend, in order, every command that never reached the
-        # MCU (they were never executed, the ACK never arrived).
+        # No ACK was ever received in the session, not even an orphan one: the
+        # firmware ignores CH1 (no Profile R1), so none of these pending commands
+        # ran. An R1 firmware whose ACKs were all lost is already excluded by the
+        # acks_seen guard above.
         self.reliable = False
         self._log("WARN", "firmware without Profile R1: falling back to channel 0")
         for pending in self._unacked_commands:
@@ -231,9 +239,10 @@ class Link:
                 self._write(rel.CH_COMMAND, self.sender.payload)
                 self.stats.retries += 1
             elif action == rel.TX_EXHAUSTED:
-                # Give the window back so the next command can start, and burn
-                # this SEQ: the MCU may have executed the command and only the
-                # ACK was lost, so reusing it would be deduped silently.
+                # Release the window so a later command can start, and burn this
+                # SEQ: if any ACK was ever seen, the MCU may have consumed it and
+                # only lost the ACK, so reusing it would be deduped silently.
+                # The CH0 replay only runs when no ACK was ever seen.
                 self.sender.abort()
                 self.seq = (self.seq + 1) & 0xFF
                 return False
@@ -325,6 +334,16 @@ class FakePort:
                 self.tx_to_pc += llp.encode(STREAM_CHANNEL, b"ok\n")
 
 
+class _Log:
+    """Minimal event collector for the self-test."""
+
+    def __init__(self) -> None:
+        self.events: List[str] = []
+
+    def log_event(self, message: str) -> None:
+        self.events.append(message)
+
+
 def _self_test() -> int:
     failures = 0
 
@@ -365,13 +384,16 @@ def _self_test() -> int:
 
     print("== firmware sin R1 (confirmación antes del fallback) ==")
     port = FakePort(support_r1=False)
-    link = Link(port)
+    log = _Log()
+    link = Link(port, log=log)
     link.hello()
     result = link.send("G1 X3")
     check(f"un comando sin ACK no degrada ({result})", result == "unacked")
     check("el enlace sigue en R1", link.reliable is True)
     check("todavía sin fallback", link.stats.fallback_ch0 == 0)
     check("nada entregado aún", port.delivered_lines == [])
+    check("el WARN loguea el SEQ que falló",
+          any("SEQ 0 not acknowledged" in event for event in log.events))
     result = link.send("G1 X4")
     check(f"el segundo comando confirma el fallback ({result})", result == "sent")
     check("enlace degradado a CH0", not link.reliable)
@@ -391,6 +413,7 @@ def _self_test() -> int:
     check("el enlace sigue en R1", link.reliable is True)
     check("sin fallback", link.stats.fallback_ch0 == 0)
     check("solo se entregó el comando bueno", port.delivered_lines == ["G1 X6"])
+    check("el SEQ fallido se quemó", link.seq == 2)
 
     print("== enlace ya probado (nunca degrada) ==")
     port = FakePort()
@@ -406,14 +429,53 @@ def _self_test() -> int:
     check("el enlace no se degrada", link.reliable is True)
     check("sin fallback", link.stats.fallback_ch0 == 0)
 
+    print("== ACK tardío (prueba de R1) ==")
+    port = FakePort(support_r1=False)
+    link = Link(port)
+    link.hello()
+    result = link.send("G1 X9")
+    check(f"primero sin ACK ({result})", result == "unacked")
+    port.tx_to_pc += llp.encode(rel.CH_ACK, rel.ack_payload(0))
+    link.pump(0.05)
+    check("el ACK huérfano se contó", link.acks_seen == 1)
+    check("un ACK tardío no cierra ventana", link.stats.acked == 0)
+    result = link.send("G1 X10")
+    check(f"el ACK tardío evita el fallback ({result})", result == "unacked")
+    check("el enlace sigue en R1", link.reliable is True)
+    check("sin fallback", link.stats.fallback_ch0 == 0)
+
     print("== drenaje de la basura de apertura ==")
     port = FakePort()
     link = Link(port)
-    port.tx_to_pc += b"junk" * 50
+    port.tx_to_pc += b"\xaa\x55" * 100
     dropped = link.drain(0.02)
     check(f"drenó la basura ({dropped} bytes)", dropped == 200)
     check("el puerto quedó vacío", port.in_waiting == 0)
     check("el parser no vio nada", link.poll(0) == [])
+    check("ninguna trama decodificada", link.parser.frames_ok == 0)
+    check("ningún error de trama", link.parser.frames_error == 0)
+
+    print("== bordes ==")
+    try:
+        Link(FakePort(), fallback_confirm=0)
+        rejected = False
+    except ValueError:
+        rejected = True
+    check("fallback_confirm < 1 se rechaza", rejected)
+
+    port = FakePort(support_r1=False)
+    link = Link(port, fallback_confirm=1)
+    link.hello()
+    result = link.send("G1 X20")
+    check(f"fallback_confirm=1 cae en el primer comando ({result})", result == "sent")
+    check("un comando reenviado por CH0", link.stats.fallback_ch0 == 1)
+    check("entregado por CH0", port.delivered_lines == ["G1 X20"])
+
+    port = FakePort()
+    link = Link(port)
+    port.tx_to_pc += b"abc"
+    check("drain(0) descarta una vez", link.drain(0) == 3)
+    check("objeto sin in_waiting no rompe", drain_port(object(), 0) == 0)
 
     print("== realtime no espera ACK ==")
     port = FakePort()
