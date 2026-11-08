@@ -414,7 +414,7 @@ Feedback messages provide non-critical information on what Grbl is doing, what i
       ok
       ```
       
-  		- The first line `[VER:]` contains the build version and date.
+  		- The first line `[VER:]` contains the build version and the build identifier (short commit SHA, or `local` when the sources have no git metadata).
       - A string may appear after the second `:` colon. It is a stored EEPROM string a user via a `$I=line` command or OEM can place there for personal use or tracking purposes.
   		- The `[OPT:]` line follows immediately after and contains character codes for compile-time options that were either enabled or disabled and two values separated by commas, which indicates the total usable planner blocks and serial RX buffer bytes, respectively. The codes are defined below and a CSV file is also provided for quick parsing. This is generally only used for quickly diagnosing firmware bugs or compatibility issues. 
 

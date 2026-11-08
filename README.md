@@ -127,8 +127,12 @@ pio run -e nano                                         # Compilar
 pio run -e nano -t upload --upload-port /dev/ttyUSB0  # Subir
 ```
 
-`$I` muestra el SHA corto del commit con el que se compiló (`$I` → `[VER:1.1h.<sha7>:]`)
-y `local` si el árbol no tiene `.git` (tarball). Lo inyecta `scripts/build_hash.py`.
+`$I` muestra el SHA corto del commit con el que se compiló (`$I` → `[VER:1.1h.<sha7>:]`).
+Lo inyecta `scripts/build_hash.py`. Sin `.git` en el proyecto, o si las fuentes no son la
+raíz de su propio repo (p. ej. una copia dentro de un monorepo), el identificador es
+`local` a propósito: es preferible a heredar el commit de otro repo. Un build con cambios
+**versionados** sin commitear lleva sufijo `-dirty` (`[VER:1.1h.<sha7>-dirty:]`); los
+archivos no versionados no lo activan.
 
 ## Streaming de G-code
 

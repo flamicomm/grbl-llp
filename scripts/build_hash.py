@@ -3,14 +3,22 @@
 #
 # Contract: runs before the build, defines GRBL_VERSION_BUILD as a C string
 # literal. No third-party dependencies (stdlib only); no files are written.
+#
+# Trade-off: the SHA is only used when the project directory is the root of its
+# own git repository. Sources that live inside a bigger repo (monorepo, vendored
+# copy) fall back to "local" on purpose: borrowing the parent repository's commit
+# would be a confidently wrong identifier, worse than admitting "unknown".
+# This workspace keeps one repository per component (repos/*), so every real
+# build gets its SHA; only a source copy without its own .git gets "local".
 
 Import("env")  # noqa: F821 - provided by SCons/PlatformIO
 
 import os
 import subprocess
 
-FALLBACK = "local"  # no git metadata (source tarball, CI export)
+FALLBACK = "local"  # no git metadata (source tarball, CI export), or not our own repo
 MACRO = "GRBL_VERSION_BUILD"
+GIT_TIMEOUT_S = 5
 
 
 def _git(project_dir, *args):
@@ -20,8 +28,10 @@ def _git(project_dir, *args):
             ("git",) + args,
             cwd=project_dir,
             stderr=subprocess.DEVNULL,
+            timeout=GIT_TIMEOUT_S,
         )
-    except (OSError, subprocess.CalledProcessError):
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # Missing git, not a repository, non-zero exit, or a hung/slow git.
         return None
     return output.decode("utf-8", "replace").strip()
 
@@ -55,5 +65,6 @@ def build_id(project_dir):
 _value = build_id(env.subst("$PROJECT_DIR"))
 # Double quotes must survive the SCons variable expansion and reach the
 # compiler as \"...\" so the macro expands to a string literal.
-env.Append(CPPDEFINES=[(MACRO, '\\"%s\\"' % _value)])
+# AppendUnique: harmless if this pre-script ever gets loaded twice.
+env.AppendUnique(CPPDEFINES=[(MACRO, '\\"%s\\"' % _value)])
 print("[build_hash] %s=%s" % (MACRO, _value))
