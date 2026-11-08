@@ -77,6 +77,7 @@ void mc_line(float *target, plan_line_data_t *pl_data)
 }
 
 
+#ifdef ENABLE_ARC_SUPPORT
 // Execute an arc in offset mode format. position == current xyz, target == target xyz,
 // offset == offset from current xyz, axis_X defines circle plane in tool space, axis_linear is
 // the direction of helical travel, radius == circle radius, isclockwise boolean. Used
@@ -189,6 +190,7 @@ void mc_arc(float *target, plan_line_data_t *pl_data, float *position, float *of
   // Ensure last segment arrives at target location.
   mc_line(target, pl_data);
 }
+#endif // ENABLE_ARC_SUPPORT
 
 
 // Execute dwell in seconds.

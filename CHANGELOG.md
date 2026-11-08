@@ -5,6 +5,30 @@ All notable changes to grbl-llp are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `ENABLE_ARC_SUPPORT` y `ENABLE_NONMODAL_EXTRA` en `src/config.h`: guardas de compilación
+  para G2/G3 y para los no-modales extendidos (G10, G28/G30, G28.1/G30.1, G53). Reactivarlas
+  restaura el binario anterior byte por byte (medido con `avr-size`).
+
+### Changed
+- **Presupuesto de flash**: el build de esta máquina apaga arcos (~3220 B), no-modales
+  extendidos (~500 B) y startup blocks (~290 B). UNO pasa de 97.0% a 84.2%
+  (27148/32256 B); Nano a 88.4% (27148/30720 B). El G-code que genera el host no cambia:
+  usa G0/G1, G38.x y G92.
+- `$RST=*`, `$RST=$` y `$RST=#` se conservan: apagarlos ahorra <10 B y `$RST=$` es parte
+  del procedimiento de reseteo de EEPROM post-flash.
+
+### Fixed
+- `G3` con `ENABLE_ARC_SUPPORT` apagado caía sin etiqueta `case` y terminaba en la rama de
+  probe. Ahora `G2` y `G3` responden `error:20`.
+- `$N0=...` con `N_STARTUP_LINE 0` escribía EEPROM al pedo y tardaba segundos en contestar.
+  Ahora responde `error:7` de inmediato.
+- `scripts/test_r1.py`: las líneas de texto pueden venir partidas entre frames LLP (wrap del
+  ring); el banco ahora las reensambla por `\n` y drena el `ok` de preparación antes de
+  contar, así T1/T4 no fallan por carrera.
+
 ## [1.1.0] - 2026-06-10
 
 ### Added

@@ -132,7 +132,10 @@
 // and addresses are defined in settings.h. With the current settings, up to 2 startup blocks may
 // be stored and executed in order. These startup blocks would typically be used to set the g-code
 // parser state depending on user preferences.
-#define N_STARTUP_LINE 2 // Integer (1-2)
+// NOTE: 0 disables startup blocks entirely (no `$N` command, no execution) and saves ~290 B of
+// flash. This host never programs `$N`, so nothing is lost. The EEPROM addresses of the startup
+// block area (settings.h) do not move; the block is simply unused.
+#define N_STARTUP_LINE 0 // Integer (0-2)
 
 // Number of floating decimal points printed by Grbl for certain value types. These settings are
 // determined by realistic and commonly observed values in CNC machines. For example, position
@@ -688,6 +691,26 @@
    #define TX_BUFFER_SIZE 160
 */
 
+// ---------------------------------------------------------------------------------------------
+// Flash budget: optional G-code features compiled out for this machine
+// ---------------------------------------------------------------------------------------------
+// The ATmega328P has 31.5 KB usable flash (32256 B, 512 B taken by optiboot). Arc support,
+// the extended non-modal commands, startup blocks and the debug keep-alive are all optional
+// and cost real flash. Costs below are measured deltas from `avr-size` on the final image.
+//
+// G2/G3 arcs (~3220 B): pcb2gcode never emits arcs (its source contains no G02/G03), the
+// wood-base generator only emits G0/G1 and the autolevel pass emits G0/G1/G38.3. Disabling
+// drops the arc math in gc_execute_line, mc_arc() and the libm/atan2/sqrt dependency.
+// A G2/G3 line then returns error:20 instead of silently doing something wrong.
+// Uncomment to restore full arc support.
+// #define ENABLE_ARC_SUPPORT
+
+// Extended non-modal commands G10, G28/G30, G28.1/G30.1 and G53 (~500 B). This host never
+// issues them: jogging uses G91, "Set zero" uses G92 (kept, also used by autolevel), and
+// homing uses `$H`, not G28. G92 is NOT part of this group.
+// Uncomment to restore them.
+// #define ENABLE_NONMODAL_EXTRA
+
 // Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=...
 // sp=... u=... re=... rt=... rd=... td=... ca=...] every 10s via
 // protocol_execute_realtime(). Helps diagnose MCU hangs, LLP traffic problems and
@@ -707,6 +730,13 @@
 // removes A0 from the control input mask entirely: no pin-change interrupt, no
 // reset. Feed hold (A1) and cycle start (A2) keep working.
 // #define DISABLE_CONTROL_RESET_PIN
+
+// Profile R1 fault injection (integration test only, never on a cutting machine).
+// LLP_TEST_DROP_CH1=N drops one command frame in N: the sender must retransmit
+// it and the job must continue. LLP_TEST_DROP_ACK=N drops one ACK in N: the
+// sender retransmits, the receiver must deduplicate and re-ACK.
+// #define LLP_TEST_DROP_CH1 20
+// #define LLP_TEST_DROP_ACK 20
 
 // LLP transport configuration lives in src/llp_transport.h (line buffer,
 // payload capacity, timeout) and src/llp_v4.h (library defaults). Nothing to

@@ -24,6 +24,9 @@
 /* Channel used for the grbl command/report stream. */
 #define LLP_TX_CHANNEL 0
 
+/* Channel we accept grbl-stream frames on (same stream, other direction). */
+#define LLP_RX_CHANNEL 0
+
 /* Largest frame accepted from the host (payload capacity). */
 #define LLP_RX_PAYLOAD_SIZE 64
 
@@ -37,6 +40,10 @@ typedef struct {
     uint16_t rx_dropped;
     uint16_t tx_dropped;
     uint16_t rx_raw_bytes;
+    uint16_t rx_commands;   /* Profile R1: new command frames delivered      */
+    uint16_t rx_duplicates; /* Profile R1: retransmissions suppressed        */
+    uint16_t rx_busy;       /* Profile R1: commands deferred (no ring space) */
+    uint16_t tx_acks;       /* Profile R1: ACK frames emitted                */
 } llp_stats_t;
 
 void llp_transport_init(void);
@@ -44,6 +51,11 @@ void llp_transport_rx_byte(uint8_t byte);
 void llp_transport_tx_byte(uint8_t byte);
 void llp_transport_tx_flush(void);
 void llp_transport_tx_reset(void);
+
+/* Emit a pending Profile R1 ACK. Call from the main loop, never from an ISR:
+ * the UART ring has a single writer. Returns immediately when nothing is
+ * pending or the ring is full (the ACK is retried on the next call). */
+void llp_transport_poll(void);
 void llp_transport_get_stats(llp_stats_t *stats);
 void llp_transport_reset_stats(void);
 unsigned long llp_transport_get_ms(void);

@@ -76,8 +76,12 @@ uint8_t gc_execute_line(char *line)
   memcpy(&gc_block.modal,&gc_state.modal,sizeof(gc_modal_t)); // Copy current modes
 
   uint8_t axis_command = AXIS_COMMAND_NONE;
-  uint8_t axis_0, axis_1, axis_linear;
-  uint8_t coord_select = 0; // Tracks G10 P coordinate selection for execution
+  #ifdef ENABLE_ARC_SUPPORT
+    uint8_t axis_0, axis_1, axis_linear;
+  #endif
+  #ifdef ENABLE_NONMODAL_EXTRA
+    uint8_t coord_select = 0; // Tracks G10 P coordinate selection for execution
+  #endif
 
   // Initialize bitflag tracking variables for axis indices compatible operations.
   uint8_t axis_words = 0; // XYZ tracking
@@ -449,6 +453,7 @@ uint8_t gc_execute_line(char *line)
   }
 
   // [11. Set active plane ]: N/A
+  #ifdef ENABLE_ARC_SUPPORT
   switch (gc_block.modal.plane_select) {
     case PLANE_SELECT_XY:
       axis_0 = X_AXIS;
@@ -465,6 +470,7 @@ uint8_t gc_execute_line(char *line)
       axis_1 = Z_AXIS;
       axis_linear = X_AXIS;
   }
+  #endif
 
   // [12. Set length units ]: N/A
   // Pre-convert XYZ coordinate values to millimeters, if applicable.
@@ -513,6 +519,7 @@ uint8_t gc_execute_line(char *line)
   // the axis value, G92 similarly to G10 L20, and G28/30 as an intermediate target position that observes
   // all the current coordinate system and G92 offsets.
   switch (gc_block.non_modal_command) {
+    #ifdef ENABLE_NONMODAL_EXTRA
     case NON_MODAL_SET_COORDINATE_DATA:
       // [G10 Errors]: L missing and is not 2 or 20. P word missing. (Negative P value done.)
       // [G10 L2 Errors]: R word NOT SUPPORTED. P value not 0 to nCoordSys(max 9). Axis words missing.
@@ -551,6 +558,10 @@ uint8_t gc_execute_line(char *line)
         } // Else, keep current stored value.
       }
       break;
+    #else
+    case NON_MODAL_SET_COORDINATE_DATA:
+      FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Extended non-modal commands compiled out]
+    #endif
     case NON_MODAL_SET_COORDINATE_OFFSET:
       // [G92 Errors]: No axis words.
       if (!axis_words) { FAIL(STATUS_GCODE_NO_AXIS_WORDS); } // [No axis words]
@@ -599,6 +610,7 @@ uint8_t gc_execute_line(char *line)
 
       // Check remaining non-modal commands for errors.
       switch (gc_block.non_modal_command) {
+        #ifdef ENABLE_NONMODAL_EXTRA
         case NON_MODAL_GO_HOME_0: // G28
         case NON_MODAL_GO_HOME_1: // G30
           // [G28/30 Errors]: Cutter compensation is enabled.
@@ -623,9 +635,17 @@ uint8_t gc_execute_line(char *line)
           // [G28.1/30.1 Errors]: Cutter compensation is enabled.
           // NOTE: If axis words are passed here, they are interpreted as an implicit motion mode.
           break;
+        #else
+        case NON_MODAL_GO_HOME_0: // G28
+        case NON_MODAL_GO_HOME_1: // G30
+        case NON_MODAL_SET_HOME_0: // G28.1
+        case NON_MODAL_SET_HOME_1: // G30.1
+          FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Extended non-modal commands compiled out]
+        #endif
         case NON_MODAL_RESET_COORDINATE_OFFSET:
           // NOTE: If axis words are passed here, they are interpreted as an implicit motion mode.
           break;
+        #ifdef ENABLE_NONMODAL_EXTRA
         case NON_MODAL_ABSOLUTE_OVERRIDE:
           // [G53 Errors]: G0 and G1 are not active. Cutter compensation is enabled.
           // NOTE: All explicit axis word commands are in this modal group. So no implicit check necessary.
@@ -633,6 +653,10 @@ uint8_t gc_execute_line(char *line)
             FAIL(STATUS_GCODE_G53_INVALID_MOTION_MODE); // [G53 G0/1 not active]
           }
           break;
+        #else
+        case NON_MODAL_ABSOLUTE_OVERRIDE:
+          FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Extended non-modal commands compiled out]
+        #endif
       }
   }
 
@@ -664,6 +688,10 @@ uint8_t gc_execute_line(char *line)
           if (!axis_words) { axis_command = AXIS_COMMAND_NONE; }
           break;
         case MOTION_MODE_CW_ARC: 
+        #ifndef ENABLE_ARC_SUPPORT
+        case MOTION_MODE_CCW_ARC:
+          FAIL(STATUS_GCODE_UNSUPPORTED_COMMAND); // [Arc support compiled out]
+        #else
           gc_parser_flags |= GC_PARSER_ARC_IS_CLOCKWISE; // No break intentional.
         case MOTION_MODE_CCW_ARC:
           // [G2/3 Errors All-Modes]: Feed rate undefined.
@@ -800,6 +828,7 @@ uint8_t gc_execute_line(char *line)
             }
           }
           break;
+        #endif // ENABLE_ARC_SUPPORT
         case MOTION_MODE_PROBE_TOWARD_NO_ERROR: case MOTION_MODE_PROBE_AWAY_NO_ERROR:
           gc_parser_flags |= GC_PARSER_PROBE_IS_NO_ERROR; // No break intentional.
         case MOTION_MODE_PROBE_TOWARD: case MOTION_MODE_PROBE_AWAY:
@@ -964,6 +993,7 @@ uint8_t gc_execute_line(char *line)
 
   // [19. Go to predefined position, Set G10, or Set axis offsets ]:
   switch(gc_block.non_modal_command) {
+    #ifdef ENABLE_NONMODAL_EXTRA
     case NON_MODAL_SET_COORDINATE_DATA:
       settings_write_coord_data(coord_select,gc_block.values.ijk);
       // Update system coordinate system if currently active.
@@ -986,6 +1016,7 @@ uint8_t gc_execute_line(char *line)
     case NON_MODAL_SET_HOME_1:
       settings_write_coord_data(SETTING_INDEX_G30,gc_state.position);
       break;
+    #endif // ENABLE_NONMODAL_EXTRA
     case NON_MODAL_SET_COORDINATE_OFFSET:
       memcpy(gc_state.coord_offset,gc_block.values.xyz,sizeof(gc_block.values.xyz));
       system_flag_wco_change();
@@ -1009,9 +1040,11 @@ uint8_t gc_execute_line(char *line)
       } else if (gc_state.modal.motion == MOTION_MODE_SEEK) {
         pl_data->condition |= PL_COND_FLAG_RAPID_MOTION; // Set rapid motion condition flag.
         mc_line(gc_block.values.xyz, pl_data);
+      #ifdef ENABLE_ARC_SUPPORT
       } else if ((gc_state.modal.motion == MOTION_MODE_CW_ARC) || (gc_state.modal.motion == MOTION_MODE_CCW_ARC)) {
         mc_arc(gc_block.values.xyz, pl_data, gc_state.position, gc_block.values.ijk, gc_block.values.r,
             axis_0, axis_1, axis_linear, bit_istrue(gc_parser_flags,GC_PARSER_ARC_IS_CLOCKWISE));
+      #endif
       } else {
         // NOTE: gc_block.values.xyz is returned from mc_probe_cycle with the updated position value. So
         // upon a successful probing cycle, the machine position and the returned value should be the same.

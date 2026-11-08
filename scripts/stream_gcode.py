@@ -37,6 +37,10 @@ _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _SCRIPT_DIR)
 
 import llp
+import llp_link
+
+# Set by stream_gcode(): when present, commands go through Profile R1.
+_ACTIVE_LINK = None
 
 
 DEFAULT_PORT = '/dev/ttyUSB0'
@@ -158,12 +162,20 @@ class StatusMonitor:
 
 def send_frame(ser, text, log=None, force_no_newline=False):
     """Send text as an LLP frame over serial.
-    
+
+    With an active Profile R1 link (``_ACTIVE_LINK``) G-code lines travel on
+    channel 1 and are retransmitted until the MCU acknowledges them; real-time
+    commands stay on channel 0. Without a link this is the legacy channel-0
+    path.
+
     The text is expected to end with '\\n' (G-code line terminator).
     If it doesn't, we add it to ensure proper processing.
     Set force_no_newline=True for real-time commands ('?', '!', '~', '\\x18')
     that should not have '\\n' appended.
     """
+    if _ACTIVE_LINK is not None:
+        return _ACTIVE_LINK.send(text, force_no_newline)
+
     if not force_no_newline and not text.endswith('\n'):
         text = text + '\n'
     
@@ -176,6 +188,9 @@ def send_frame(ser, text, log=None, force_no_newline=False):
 
 def read_responses(ser, parser, timeout_sec, log=None):
     """Read and parse LLP frames, return list of decoded text strings."""
+    if _ACTIVE_LINK is not None:
+        return _ACTIVE_LINK.poll(timeout_sec)
+
     start = time.time()
     payloads = []
     while time.time() - start < timeout_sec:
@@ -254,7 +269,9 @@ def reset_arduino(ser, parser, log=None):
     print("[RESET] Sending ctrl-x (0x18) to reset Arduino...")
     if log:
         log.log_event("Sending ctrl-x (0x18) reset")
-    send_frame(ser, "\x18", log=log)
+    # force_no_newline: 0x18 is real-time; a trailing '\n' would reach grbl as
+    # an empty line and produce a spurious 'ok'.
+    send_frame(ser, "\x18", log=log, force_no_newline=True)
     time.sleep(0.5)
     resps = read_responses(ser, parser, timeout_sec=2.0, log=log)
     for r in resps:
@@ -382,6 +399,15 @@ def stream_gcode(filepath, port, baud):
         parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
         read_responses(ser, parser, timeout_sec=1.5, log=log)
         reset_arduino(ser, parser, log=log)
+
+        # Profile R1: commands travel on channel 1 and are retransmitted until
+        # the MCU acknowledges them. A lost frame no longer aborts the stream.
+        global _ACTIVE_LINK
+        _ACTIVE_LINK = llp_link.Link(ser, log=log)
+        _ACTIVE_LINK.hello()
+        read_responses(ser, parser, timeout_sec=0.2, log=log)
+        print("[LINK] Profile R1 enabled (channel 1, ACK + dedup)")
+        log.log_event("Profile R1 link started (HELLO sent)")
 
         print("Connected. Streaming started...")
         print("=" * 60)
@@ -564,6 +590,13 @@ def stream_gcode(filepath, port, baud):
         print(f"  Skipped (intentional stops): {skipped_count}")
         print(f"  Timeouts: {timeout_count}")
         print(f"  {status_mon.report()}")
+        if _ACTIVE_LINK is not None:
+            st = _ACTIVE_LINK.stats
+            mode = "R1 (canal 1)" if _ACTIVE_LINK.reliable else "CH0 (sin R1)"
+            print(f"  Link {mode}: {st.commands} comandos, {st.acked} ACK, "
+                  f"{st.retries} retransmisiones, {st.fallback_ch0} por CH0")
+            log.log_event(f"Link {mode}: commands={st.commands} acked={st.acked} "
+                          f"retries={st.retries} fallback_ch0={st.fallback_ch0}")
         print(f"  MCU alive after streaming: {'YES' if alive else 'NO'}")
 
         log.log_event(f"Streaming complete: {sent}/{total_commands} sent, OK={ok_count}, "

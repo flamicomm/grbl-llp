@@ -28,8 +28,10 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 ## Invariantes
 
 - **Solo `-Os`.** `-O0` desborda la flash: nunca lo dejes en un commit.
-- **Headroom casi nulo.** Cualquier feature nueva exige medir flash y RAM con `avr-size`.
-  No cites porcentajes de memoria: cambian con cada commit; da el comando.
+- **Headroom: ~5.0 KB en UNO / ~3.5 KB en Nano.** Es el resultado de apagar las features
+  opcionales de `src/config.h` (`ENABLE_ARC_SUPPORT`, `ENABLE_NONMODAL_EXTRA`,
+  `N_STARTUP_LINE 0`). Antes de agregar código, medí flash y RAM con `avr-size`;
+  no cites porcentajes de memoria: cambian con cada commit, da el comando.
 - **Timer2 está tomado** por el contador de ms de LLP (`src/llp_transport.c`). No lo reuses.
 - **Buffers:** no cambies tamaños sin leer `doc/buffers.md` (hay dependencias entre
   `LINE_BUFFER_SIZE`, `LLP_RX_PAYLOAD_SIZE` y `TX_BUFFER_SIZE`).
@@ -43,6 +45,11 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 2. `src/llp_transport.c` (bytes, Timer2, flush no bloqueante) + `src/llp_v4.h`
    (framing v4.0.0, CRC16, canal, byte stuffing).
 3. `src/serial.c` adapta las ISR UART a LLP; `src/protocol.c` consume líneas desframadas.
+
+Perfil opcional **R1** (`src/llp_v4_rel.h`): canal 1 = comando confiable
+`[SEQ][DATA]`, canal 2 = ACK `[SEQ]`, ventana 1 con dedup por `SEQ`. Normativo en
+`llp-spec/docs/RELIABILITY.md`; invariantes de integración en `src/AGENTS.md`.
+El canal 0 (stream grbl) queda igual.
 
 Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `README.md`.
 
@@ -79,6 +86,8 @@ Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `REA
 | `[MSG:RST:SRC:HARD_LIMIT/SOFT_LIMIT]` | Alarma de límites | revisar recorrido / `$20`/`$21` |
 | `[DBG:... sp=...]` con `sp` muy bajo | Stack profundo | revisar buffers/stack (`doc/buffers.md`) |
 | `[DBG:... ca=...]` creciendo durante un corte | EMI en A0 (pulsos filtrados por el debounce) | pull-up 10 k + 100 nF, desconectar A0 o `DISABLE_CONTROL_RESET_PIN` |
+| `[DBG:ack=... dup=...]` con `dup` creciendo | El host retransmite: se perdió un ACK o un comando | normal si es esporádico (el dedup lo absorbe); si crece siempre, revisar UART/EMI |
+| `[DBG:... busy=...]` creciendo | Comandos diferidos por falta de espacio en el ring de línea | revisar `RX_BUFFER_SIZE` / ritmo del host (`doc/buffers.md`) |
 
 ## Documentación
 

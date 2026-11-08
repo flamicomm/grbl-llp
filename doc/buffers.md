@@ -16,6 +16,18 @@ documento no es la fuente de verdad**, es el mapa. Verifica siempre con `grep`.
 | `BLOCK_BUFFER_SIZE` | `src/planner.h:29` y `:31` | 8 | bloques del planificador (bajado de 12, ver "Stack") |
 | `LLP_RX_TIMEOUT_MS` | `src/llp_transport.h` | 2000 | timeout inter-byte del parser |
 
+## Perfil R1 (canal confiable)
+
+| Elemento | Tamaño | Nota |
+|---|---|---|
+| `llp4_rel_rx_t` (`llp_rel_rx`) | 6 B | `last_seq`, `have_seq` y 2 contadores |
+| `llp_ack_pending` / `llp_ack_seq` | 2 B | slot único: con ventana 1 nunca hay más de un ACK |
+| Contadores `rx_commands` / `rx_duplicates` / `rx_busy` / `tx_acks` | 8 B | 4ª línea de `[DBG]` |
+
+No agrega buffers: la aceptación usa el mismo ring de línea y se hace **atómica**
+comprobando el espacio libre antes de consumir el `SEQ`. El payload de comando es
+`[SEQ][DATA]` con `DATA <= 63 B` (1 + 63 = 64 = `LLP_RX_PAYLOAD_SIZE`).
+
 ## Trampa: `src/config.h` miente por diseño
 
 `src/config.h` tiene un bloque comentado (aprox. líneas 678–700) que **documenta**

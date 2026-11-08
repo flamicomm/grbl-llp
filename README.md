@@ -62,8 +62,8 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
-| Flash usado | ~93% (Grbl original) | **91.5%** UNO / **96.1%** Nano (optimizado para PCB) |
-| RAM usada | ~80% | **83.5%** |
+| Flash usado | ~93% (Grbl original) | **84.2%** UNO / **88.4%** Nano (optimizado para PCB) |
+| RAM usada | ~80% | **67.2%** |
 
 ## Archivos agregados/modificados clave
 
@@ -142,20 +142,93 @@ python3 scripts/stream_gcode.py scripts/gcode_examples/test_large.gcode --port /
 - Continúa tras `error:` (ej: M6 no soportado → `error:20`)
 - Detecta cuelgues MCU y aborta con info de línea/comando
 
+## Canal de comandos confiable (perfil R1)
+
+El wire format v4 garantiza que no llegue una trama corrupta, pero **no** que una
+trama llegue. Si se pierde un comando, el host queda esperando el `ok` para
+siempre, y reintentar a ciegas puede ejecutar el movimiento dos veces.
+
+El perfil **R1** (normativo en [`llp-spec`](https://github.com/flamicomm/llp-spec/blob/main/docs/RELIABILITY.md),
+implementación en `src/llp_v4_rel.h`) agrega una capa confiable sobre dos canales:
+
+```
+COMMAND (canal 1):  [SEQ][DATA...]      host -> MCU
+ACK     (canal 2):  [SEQ]               MCU  -> host
+```
+
+- **Ventana 1**: un comando en vuelo. El host no manda el siguiente hasta el ACK.
+- **Dedup**: el MCU guarda `last_seq`; un `SEQ` repetido se re-ACKea y **se
+  descarta** (`llp4_rel_rx_accept()`), así un ACK perdido nunca ejecuta dos veces.
+- **Aceptación atómica**: si los bytes no entran completos en el ring de línea
+  (`RX_BUFFER_SIZE = 80`), **no se consume el `SEQ` ni se ACKea**; la
+  retransmisión lo reintenta después. La presión de buffer se convierte en
+  retransmisión, no en pérdida.
+- **ACK desde el main loop** (`llp_transport_poll()`, llamado en
+  `protocol_execute_realtime()`): el ring de TX tiene un solo escritor, la ISR
+  solo marca `llp_ack_pending`.
+- El stream grbl normal (`ok`, status, `[DBG]`, `[MSG]`) sigue por el **canal 0**
+  sin cambios, y los realtime (`?`, `!`, `~`, `0x18`) también.
+
+El keep-alive reporta la salud del enlace en una cuarta línea:
+
+```
+[DBG:ack=1234 dup=0 busy=0]
+```
+
+`dup` > 0 significa que hubo retransmisiones (ACK perdido) y que el dedup las
+absorbió; `busy` cuenta comandos diferidos por falta de espacio en el ring.
+
+En Python, `scripts/llp_rel.py` es la copia vendorizada de la referencia y
+`scripts/llp_link.py` el enlace de alto nivel que usan `stream_gcode.py` y
+`test_r1.py`. Si el firmware no ACKea el primer comando (versión sin R1), el
+enlace lo avisa y sigue por el canal 0, así el mismo script sirve para ambos
+firmwares. `python3 scripts/llp_link.py --self-test` ejercita entrega limpia,
+ACK perdido, comando perdido y auto-detección contra un MCU simulado.
+
+Para el banco hay inyección de fallas (nunca en una máquina cortando):
+`#define LLP_TEST_DROP_CH1 20` tira 1 comando de cada 20 y
+`#define LLP_TEST_DROP_ACK 20` tira 1 ACK de cada 20. El arnés
+`scripts/test_r1.py` habla CH1/CH2 directo por el puerto serie y verifica
+entrega limpia, duplicados, `SEQ` repetido con otro payload y el wrap 255→0.
+
 ## Scripts de prueba
 
 | Script | Descripción |
 |---|---|
-| `scripts/stream_gcode.py` | Streaming G-code real vía LLP |
+| `scripts/stream_gcode.py` | Streaming G-code real vía LLP (usa R1: reintenta en vez de abortar) |
 | `scripts/llp.py` | Librería LLP v4 (encode/decode/parser) |
+| `scripts/llp_rel.py` | Perfil R1 (`Sender`/`Receiver`) — copia vendorizada de la referencia |
+| `scripts/llp_link.py` | Enlace serie con R1: ACK, hello y auto-detección de firmware sin R1 (`--self-test` sin hardware) |
+| `scripts/test_r1.py` | Banco del perfil R1 (ACK, dedup, retransmisión) por puerto serie |
 | `test_short.gcode` | G-code corto para pruebas rápidas |
 | `test_large.gcode` | G-code real de PCB (FlatCAM, ~5000 líneas) |
 
 ## Flash y RAM
 
-- **Flash**: 91.5% (29518/32256 bytes UNO) / 96.1% (29518/30720 bytes Nano) con `-Os`
-- **RAM**: 83.5% (1711/2048 bytes)
+Medido con `avr-size` sobre el build actual (`pio run -e uno` / `-e nano`, `-Os`):
+
+- **UNO**: 84.2% (27148/32256 bytes) · **Nano**: 88.4% (27148/30720 bytes)
+- **RAM**: 67.2% (1377/2048 bytes)
 - **Solo `-Os`**: `-O0` desborda flash
+
+El espacio libre no es casual: `src/config.h` tiene switches para compilar fuera G-code
+que esta máquina no usa. Los ahorros están medidos con `avr-size` (ver el bloque
+"Flash budget" del propio `config.h`):
+
+| Switch | Ahorro | Qué desactiva |
+|---|---:|---|
+| `ENABLE_ARC_SUPPORT` (apagado) | ~3220 B | G2/G3: parsing, `mc_arc()` y libm (`atan2`/`sqrt`) |
+| `ENABLE_NONMODAL_EXTRA` (apagado) | ~500 B | G10, G28/G30, G28.1/G30.1 y G53 (G92 se conserva) |
+| `N_STARTUP_LINE 0` | ~290 B | startup blocks y comando `$N` |
+| `DEBUG_KEEPALIVE` (encendido) | ~750 B | líneas `[DBG:...]` cada 10 s |
+
+`DEBUG_KEEPALIVE` está encendido a propósito para la validación del perfil R1; apagarlo
+deja el UNO en ~82% de flash. `$RST=*`, `$RST=$` y `$RST=#` se conservan: el procedimiento
+de reseteo de EEPROM de más abajo depende de `$RST=$`.
+
+Con `ENABLE_ARC_SUPPORT` apagado, una línea G2/G3 responde `error:20` (no hay
+interpolación de arcos). El host no las genera: pcb2gcode no emite G02/G03, el generador
+de base de madera emite G0/G1 y el autolevel usa G0/G1/G38.3.
 
 ## Importante: Reseteo de EEPROM al flashear
 
