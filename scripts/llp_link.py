@@ -8,9 +8,12 @@ Wraps a pyserial-compatible port with a v4 parser and the R1 state machines:
     poll(seconds)  channel-0 payloads as text (ok, error:, <status>, [DBG] ...)
     hello()        session start on channel 3 (sent twice)
 
-Auto-detection: if the first command is not acknowledged (older firmware that
-only understands channel 0), the link falls back to plain channel 0 and says so,
-so the same script works with both firmwares.
+Auto-detection: one unacknowledged command is not proof of old firmware — right
+after the port opens the MCU may still be booting (F-013/F-014). Only when the
+first ``FALLBACK_CONFIRM_COMMANDS`` commands go unacknowledged **and** no ACK was
+ever received in the session does the link declare "firmware without Profile R1",
+resend those pending commands on plain channel 0 and say so. A link that already
+ACKed a command is never degraded by later losses.
 
 Run the built-in simulation (no hardware needed):
 
@@ -36,9 +39,37 @@ STREAM_CHANNEL = 0
 # Sent on channel 0, never "ok"-acknowledged and idempotent.
 REALTIME_MIN = 0x80
 
+# One command without an ACK does not prove the firmware is old: just after the
+# port is opened the MCU is still booting (F-013/F-014). This many consecutive
+# unacknowledged commands, with no ACK at all in the session, are needed before
+# declaring "firmware without R1".
+FALLBACK_CONFIRM_COMMANDS = 2
+
 
 def is_realtime_byte(byte: int) -> bool:
     return byte in (0x18, ord('?'), ord('!'), ord('~')) or byte >= REALTIME_MIN
+
+
+def drain_port(ser, seconds: float) -> int:
+    """Discard everything the port delivers for `seconds`; returns bytes dropped.
+
+    Opening the CH340 resets the MCU: the boot banner can take ~3.9 s to flush
+    and on some opens the adapter replays ~1.1 MB of keep-alive frames (F-018)
+    on top of the usual startup garbage (F-015). Feeding that through the LLP
+    parser is useless work, so this helper reads and throws it away. A value
+    `seconds <= 0` performs a single non-blocking read. Fakes without
+    `in_waiting` degrade to zero, like `_write()` tolerates fakes without
+    `flush()`.
+    """
+    discarded = 0
+    deadline = time.monotonic() + seconds
+    while True:
+        waiting = getattr(ser, "in_waiting", 0)
+        if waiting:
+            discarded += len(ser.read(waiting))
+        if seconds <= 0 or time.monotonic() >= deadline:
+            return discarded
+        time.sleep(0.002)
 
 
 @dataclass
@@ -52,22 +83,33 @@ class LinkStats:
 
 
 class Link:
-    """Reliable command link over an already-open serial port."""
+    """Reliable command link over an already-open serial port.
+
+    `fallback_confirm` (>= 1) is the number of consecutive unacknowledged
+    commands, with no ACK at all in the session, that confirm the firmware has
+    no Profile R1 before falling back to channel 0. One lost command on a
+    freshly opened port only means the MCU is still booting (F-013/F-014).
+    """
 
     def __init__(self, ser, log=None, *,
                  timeout_ms: int = rel.DEFAULT_ACK_TIMEOUT_MS,
                  max_retries: int = rel.DEFAULT_MAX_RETRIES,
                  backoff_ms: int = rel.DEFAULT_BACKOFF_MS,
-                 reliable: bool = True) -> None:
+                 reliable: bool = True,
+                 fallback_confirm: int = FALLBACK_CONFIRM_COMMANDS) -> None:
+        if fallback_confirm < 1:
+            raise ValueError("fallback_confirm must be >= 1")
         self.ser = ser
         self.log = log
         self.parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
         self.sender = rel.Sender(timeout_ms, max_retries, backoff_ms)
         self.receiver = rel.Receiver()
         self.reliable = reliable
+        self.fallback_confirm = fallback_confirm
         self.seq = 0
         self.stats = LinkStats()
         self._pending: List[str] = []
+        self._unacked_commands: List[bytes] = []
 
     # -- low level -------------------------------------------------------
     def _now_ms(self) -> int:
@@ -96,6 +138,10 @@ class Link:
             if time.monotonic() >= deadline:
                 return
             time.sleep(0.002)
+
+    def drain(self, seconds: float) -> int:
+        """Discard bytes for `seconds` without parsing them; returns the count."""
+        return drain_port(self.ser, seconds)
 
     def _handle_event(self, event) -> None:
         if event[0] != "frame":
@@ -140,21 +186,39 @@ class Link:
 
         self.stats.commands += 1
         if self._send_reliable(data):
+            self._unacked_commands.clear()
             return "acked"
 
         self.stats.unacked += 1
-        if self.stats.commands == 1:
-            # First command not acknowledged: older firmware, no R1 on CH1.
-            self.reliable = False
-            self._log("WARN", "firmware without Profile R1: falling back to channel 0")
-            self._write(STREAM_CHANNEL, data)
-            self.stats.fallback_ch0 += 1
-            return "sent"
+        self._unacked_commands.append(data)
 
-        # Never resend a later command on channel 0: it might have executed and
-        # only the ACK was lost. The caller's ok/timeout logic decides.
-        self._log("ERROR", f"command SEQ {self.seq} not acknowledged")
-        return "unacked"
+        if self.stats.acked > 0:
+            # The link already proved it speaks R1: a lost command is a lost
+            # command, never a reason to degrade the whole session (F-014).
+            # Fallback is impossible from now on, so keep nothing queued.
+            self._unacked_commands.clear()
+            self._log("ERROR", f"command SEQ {self.seq} not acknowledged")
+            return "unacked"
+
+        if len(self._unacked_commands) < self.fallback_confirm:
+            self._log(
+                "WARN",
+                f"command SEQ {self.seq} not acknowledged; waiting for "
+                f"confirmation ({len(self._unacked_commands)}/"
+                f"{self.fallback_confirm})",
+            )
+            return "unacked"
+
+        # Enough consecutive misses with no ACK ever received: older firmware,
+        # no R1 on CH1. Resend, in order, every command that never reached the
+        # MCU (they were never executed, the ACK never arrived).
+        self.reliable = False
+        self._log("WARN", "firmware without Profile R1: falling back to channel 0")
+        for pending in self._unacked_commands:
+            self._write(STREAM_CHANNEL, pending)
+            self.stats.fallback_ch0 += 1
+        self._unacked_commands.clear()
+        return "sent"
 
     def _send_reliable(self, data: bytes) -> bool:
         if not self.sender.start(self.seq, data, self._now_ms()):
@@ -167,6 +231,11 @@ class Link:
                 self._write(rel.CH_COMMAND, self.sender.payload)
                 self.stats.retries += 1
             elif action == rel.TX_EXHAUSTED:
+                # Give the window back so the next command can start, and burn
+                # this SEQ: the MCU may have executed the command and only the
+                # ACK was lost, so reusing it would be deduped silently.
+                self.sender.abort()
+                self.seq = (self.seq + 1) & 0xFF
                 return False
             self.pump(0.002)
         return True
@@ -186,7 +255,8 @@ class FakePort:
     """pyserial-compatible port backed by a simulated Arduino."""
 
     def __init__(self, support_r1: bool = True,
-                 drop_commands: int = 0, drop_acks: int = 0) -> None:
+                 drop_commands: int = 0, drop_acks: int = 0,
+                 silent: bool = False) -> None:
         self.rx_from_pc = b""
         self.tx_to_pc = b""
         self.parser = llp.Parser(capacity=llp.MAX_PAYLOAD)
@@ -194,6 +264,7 @@ class FakePort:
         self.support_r1 = support_r1
         self.drop_commands = drop_commands     # drop the N-th command frame
         self.drop_acks = drop_acks             # drop the N-th ACK
+        self.silent = silent                   # ignore CH1: no delivery, no ACK
         self.commands_seen = 0
         self.acks_seen = 0
         self.delivered_lines: List[str] = []
@@ -225,6 +296,8 @@ class FakePort:
             return
 
         if channel == rel.CH_COMMAND and self.support_r1:
+            if self.silent:
+                return                     # link stalled: no delivery, no ACK
             self.commands_seen += 1
             if self.commands_seen == self.drop_commands:
                 return                     # simulated loss: no delivery, no ACK
@@ -290,15 +363,57 @@ def _self_test() -> int:
     check("retransmitió", link.stats.retries == 1)
     check("entregado una sola vez", port.delivered_lines == ["G1 X2"])
 
-    print("== firmware viejo (auto-detección) ==")
+    print("== firmware sin R1 (confirmación antes del fallback) ==")
     port = FakePort(support_r1=False)
     link = Link(port)
     link.hello()
     result = link.send("G1 X3")
-    check(f"cae a CH0 ({result})", result == "sent")
-    check("sin R1 en el enlace", not link.reliable)
-    check("entregado por CH0", port.delivered_lines == ["G1 X3"])
-    check("un ok recibido", link.poll(0.05) == ["ok\n"])
+    check(f"un comando sin ACK no degrada ({result})", result == "unacked")
+    check("el enlace sigue en R1", link.reliable is True)
+    check("todavía sin fallback", link.stats.fallback_ch0 == 0)
+    check("nada entregado aún", port.delivered_lines == [])
+    result = link.send("G1 X4")
+    check(f"el segundo comando confirma el fallback ({result})", result == "sent")
+    check("enlace degradado a CH0", not link.reliable)
+    check("dos comandos reenviados por CH0", link.stats.fallback_ch0 == 2)
+    check("replay en orden", port.delivered_lines == ["G1 X3", "G1 X4"])
+    check("dos ok recibidos", link.poll(0.05) == ["ok\n", "ok\n"])
+
+    print("== boot lento (el enlace se recupera) ==")
+    port = FakePort(support_r1=False)
+    link = Link(port)
+    link.hello()
+    result = link.send("G1 X5")
+    check(f"comando durante el boot sin ACK ({result})", result == "unacked")
+    port.support_r1 = True
+    result = link.send("G1 X6")
+    check(f"comando posterior ACKeado ({result})", result == "acked")
+    check("el enlace sigue en R1", link.reliable is True)
+    check("sin fallback", link.stats.fallback_ch0 == 0)
+    check("solo se entregó el comando bueno", port.delivered_lines == ["G1 X6"])
+
+    print("== enlace ya probado (nunca degrada) ==")
+    port = FakePort()
+    link = Link(port)
+    link.hello()
+    result = link.send("ok")
+    check(f"comando inicial ACKeado ({result})", result == "acked")
+    port.silent = True
+    first = link.send("G1 X7")
+    second = link.send("G1 X8")
+    check(f"primera pérdida sin ACK ({first})", first == "unacked")
+    check(f"segunda pérdida sin ACK ({second})", second == "unacked")
+    check("el enlace no se degrada", link.reliable is True)
+    check("sin fallback", link.stats.fallback_ch0 == 0)
+
+    print("== drenaje de la basura de apertura ==")
+    port = FakePort()
+    link = Link(port)
+    port.tx_to_pc += b"junk" * 50
+    dropped = link.drain(0.02)
+    check(f"drenó la basura ({dropped} bytes)", dropped == 200)
+    check("el puerto quedó vacío", port.in_waiting == 0)
+    check("el parser no vio nada", link.poll(0) == [])
 
     print("== realtime no espera ACK ==")
     port = FakePort()

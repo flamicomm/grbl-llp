@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import serial  # pyserial
 import llp
+import llp_link
 import llp_rel as rel
 
 
@@ -48,6 +49,9 @@ class Bench:
         self.ser.port = port
         self.ser.baudrate = baud
         self.ser.timeout = 0.02
+        # On this CH340, opening the port toggles DTR and resets the MCU even
+        # with dtr=False (F-013). That is why main() drains the boot banner with
+        # `--wait-boot` before the handshake and then sends `$X`.
         self.ser.dtr = False
         self.ser.rts = False
         self.ser.open()
@@ -86,6 +90,10 @@ class Bench:
             if time.monotonic() >= deadline:
                 return
             time.sleep(0.002)
+
+    def drain(self, seconds: float) -> int:
+        """Discard everything for `seconds` (boot banner, F-018 replay)."""
+        return llp_link.drain_port(self.ser, seconds)
 
     def _handle(self, event) -> None:
         if event[0] != "frame":
@@ -155,16 +163,18 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", default="/dev/ttyUSB0")
     ap.add_argument("--baud", type=int, default=115200)
-    ap.add_argument("--wait-boot", type=float, default=2.5,
-                    help="seconds to wait after opening the port (MCU boots on DTR)")
+    ap.add_argument("--wait-boot", type=float, default=4.5,
+                    help="seconds to drain the port after opening it: the CH340 "
+                         "resets the MCU on open and the boot banner takes ~3.9 s "
+                         "(F-013/F-014)")
     args = ap.parse_args()
 
     link = Bench(args.port, args.baud)
     report = Report()
 
     try:
-        time.sleep(args.wait_boot)
-        link.pump(1.0)
+        discarded = link.drain(args.wait_boot)
+        print(f"  boot: {discarded} bytes descartados en {args.wait_boot:g}s")
 
         print("== preparación ==")
         link.hello()
