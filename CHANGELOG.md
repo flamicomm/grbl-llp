@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   restaura el binario anterior byte por byte (medido con `avr-size`).
 
 ### Changed
+- **`$I` identifica el build**: `scripts/build_hash.py` inyecta el SHA corto del commit
+  en `GRBL_VERSION_BUILD` (`$I` → `[VER:1.1h.<sha7>:]`); sin `.git` usa `local`.
 - **Presupuesto de flash**: el build de esta máquina apaga arcos (~3220 B), no-modales
   extendidos (~500 B) y startup blocks (~290 B). UNO pasa de 97.0% a 84.2%
   (27148/32256 B); Nano a 88.4% (27148/30720 B). El G-code que genera el host no cambia:
