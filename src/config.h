@@ -723,6 +723,14 @@
 // enabling it on a full build.
 #define DEBUG_KEEPALIVE
 
+// Nominal internal bandgap used to estimate Vcc at boot ($I-style diagnostics,
+// CNC-002). The datasheet range is 1.0-1.2 V: measure the real one with a
+// multimeter and adjust this constant for an absolute reading. Uncalibrated,
+// the value is good to ~±10 %, which is enough to tell a brown-out from a crash.
+#ifndef BANDGAP_MV
+  #define BANDGAP_MV 1100
+#endif
+
 // Software debounce for control reset pin (A0). Filters EMI transients and mechanical
 // button bounce. 20ms is sufficient for most mechanical buttons (1-10ms bounce) and
 // EMI transients (<1ms). Increased to 100ms for machines with a brushed spindle and

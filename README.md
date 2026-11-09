@@ -293,12 +293,20 @@ En cada **reset de CPU** imprime además, antes del banner:
 
 ```
 [MSG:BOOT:n=... m=ok|wipe up=...]
+[MSG:BOOT:stk=... lim=...]
 [MSG:BOOT:src=NONE|A0|LLP|... ca=...]
+[MSG:BOOT:vcc=<x.xx>|?]
 ```
 
 `n` cuenta reinicios desde el último encendido, `m` indica si la RAM se conservó
 (reset) o hubo power-on, y `up` es el uptime del último pasaje del main loop de la
 vida anterior (sirve para distinguir un reset inmediato de un cuelgue previo).
+`vcc` estima la alimentación con el bandgap interno de 1.1 V
+(`Vcc = BANDGAP_MV × 1024 / ADC`, ver `BANDGAP_MV` en `src/config.h`) **en el
+momento del arranque**: un sag transitorio ya recuperado puede leerse normal y un
+brown-out severo puede saturar el ADC y dar `?`. Sin calibrar `BANDGAP_MV` contra
+un multímetro el valor tiene un error de ~±10 %, suficiente para orientar el
+diagnóstico; imprime `?` si la lectura no es válida.
 
 Se agrega `stk=` (pico de stack de la vida anterior) y `lim=` (RAM disponible para el
 stack). Si `stk` se acerca a `lim`, el stack puede desbordar hacia `.noinit` y

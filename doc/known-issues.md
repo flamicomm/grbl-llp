@@ -88,7 +88,9 @@ reinicio de CPU imprime, antes del banner de Grbl:
 
 ```
 [MSG:BOOT:n=12 m=ok up=1234567]
+[MSG:BOOT:stk=331 lim=671]
 [MSG:BOOT:src=NONE ca=0]
+[MSG:BOOT:vcc=5.01]
 ```
 
 | Campo | Significado |
@@ -96,8 +98,18 @@ reinicio de CPU imprime, antes del banner de Grbl:
 | `n` | Reinicios desde el último encendido (1 en un arranque en frío) |
 | `m` | `ok` = la RAM se conservó (fue un reset, no un power-on); `wipe` = arranque en frío |
 | `up` | Uptime (ms) del **último pasaje del main loop** de la vida anterior |
+| `stk` / `lim` | Pico de stack de la vida anterior / RAM disponible para el stack |
 | `src` | Último origen anotado (`NONE` si nadie llamó a `mc_reset()` antes del reset) |
 | `ca` | Pulsos de A0 filtrados, preservados entre resets |
+| `vcc` | Vcc estimado por el bandgap interno de 1.1 V; `?` si la lectura no es válida |
+
+`vcc` se calcula como `Vcc = BANDGAP_MV × 1024 / ADC` (MUX del bandgap, referencia
+AVcc, prescaler /128) y se mide **una vez, al arrancar**: un sag transitorio ya
+recuperado puede leerse normal, y un brown-out severo puede saturar el ADC y dar
+`?`. `BANDGAP_MV` (en `src/config.h`) es nominal: el bandgap real está entre 1.0 y
+1.2 V, así que sin calibrarlo contra un multímetro el valor tiene ~±10 % de error.
+Alcanza para orientar el diagnóstico de un reset, no para medir la fuente con
+precisión.
 
 Cómo leerlo:
 

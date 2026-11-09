@@ -54,6 +54,35 @@ static void print_reset_source(uint8_t src)
 }
 
 
+// Estimates Vcc (mV) from the internal 1.1 V bandgap measured against AVcc:
+// Vcc = BANDGAP_MV * 1024 / adc. Returns 0 when the ADC does not answer within
+// the bounded wait or the conversion is out of range, so a dead ADC cannot hang
+// the boot. This is the only ADC user in the firmware (the probe is digital) and
+// it leaves A0-A2, Timer2 and the buffers untouched.
+static uint16_t measure_vcc_mv(void)
+{
+  ADMUX = (1 << REFS0) | (1 << MUX3) | (1 << MUX2) | (1 << MUX1); // 1.1 V bandgap, AVcc ref
+  // ADEN + /128 (125 kHz @ 16 MHz) + start. The wait budget is shared by both
+  // conversions: 20000 iterations is far more than the ~104 us a conversion takes
+  // at 125 kHz, and an unresponsive ADC still cannot hang the boot.
+  uint16_t guard = 20000;
+  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0) | (1 << ADSC);
+  while ((ADCSRA & (1 << ADSC)) && guard) { guard--; } // first MUX change: discarded
+  ADCSRA = (1 << ADEN) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0) | (1 << ADSC);
+  while ((ADCSRA & (1 << ADSC)) && guard) { guard--; }
+  uint16_t adc = ADC;
+  ADCSRA = 0; // nobody else uses the ADC; leave it off
+  // ADIF may be left set (it is cleared by writing 1): a future ADC user must
+  // clear it before enabling ADIE.
+
+  // guard == 0 means the ADC timed out. A usable reading is 200..1022 => Vcc <=
+  // ~5.63 V with BANDGAP_MV=1100; this rejects both the uint16_t wrap (adc <= 17)
+  // and physically impossible rails.
+  if (!guard || (uint16_t)(adc - 200) > 822) { return 0; }
+  return (uint16_t)((uint32_t)BANDGAP_MV * 1024UL / adc);
+}
+
+
 int main(void)
 {
   // Save MCU reset cause before anything clears MCUSR, then clear it for next event.
@@ -105,6 +134,8 @@ int main(void)
   //   n   = restarts since the last power-on (1 on a cold start)
   //   m   = "ok" when RAM was preserved (not a power-on), "wipe" otherwise
   //   up  = uptime of the last main-loop pass of the previous life (ms)
+  //   vcc = Vcc estimate from the internal bandgap (see measure_vcc_mv), '?' when
+  //         the ADC read is not usable
   printPgmString(PSTR("[MSG:BOOT:n="));
   print_uint32_base10(system_diag_boot_count());
   printPgmString(PSTR(" m="));
@@ -124,6 +155,13 @@ int main(void)
   print_reset_source(last_reset_source);
   printPgmString(PSTR(" ca="));
   print_uint8_base10(a0_transient_count);
+  printPgmString(PSTR("]\r\n"));
+  // Vcc estimate from the internal bandgap: a brown-out reads well below nominal,
+  // a crash should not. '?' when the ADC read is not usable.
+  uint16_t vcc_mv = measure_vcc_mv();
+  printPgmString(PSTR("[MSG:BOOT:vcc="));
+  if (vcc_mv) { printFloat(vcc_mv / 1000.0f, 2); }
+  else { printPgmString(PSTR("?")); }
   printPgmString(PSTR("]\r\n"));
 
   // Grbl initialization loop upon power-up or a system abort. For the latter, all processes
