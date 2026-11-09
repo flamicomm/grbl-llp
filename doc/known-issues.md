@@ -53,7 +53,7 @@ alarmas.
   ```
   [DBG:t=... s=... sp=... bf=...]
   [DBG:tx=... rx=... u=... re=... rt=...]
-  [DBG:rd=... td=... ca=...]
+  [DBG:rd=... td=... ca=... a1=...]
   ```
   - `t` = uptime en ms de LLP; `s` = `sys.state`; `sp` = puntero de stack en el
     momento de imprimir; `bf` = bloques libres del planner.
@@ -62,6 +62,9 @@ alarmas.
   - `re`/`rt`/`rd`/`td` = errores, timeouts, drops RX y drops TX de LLP.
   - `ca` = pulsos en A0 (reset/abort) descartados por el debounce. Si crece
     durante un corte, hay EMI en ese pin aunque no llegue a reiniciar el MCU.
+  - `a1` = pulsos en A1 (feed hold) descartados por el debounce de 20 ms. Si crece
+    durante un corte, hay EMI en el pin de feed hold; el trabajo ya no se detiene
+    por un glitch, pero conviene revisar el cableado/pull-up igual que en A0.
   - **Importante:** cada línea se corta en `LLP_TX_CHUNK_SIZE` (48 bytes, igual a
     `LLP_TX_LINE_BUF_SIZE`); una línea más larga se parte en varias tramas. La trama
     completa (peor caso `10 + 2n`) tiene que entrar en el ring de TX y hay un chequeo
@@ -137,6 +140,14 @@ en `ca=`). Si el origen es `A0` y no hay botón de abort conectado:
 3. compilar con `#define DISABLE_CONTROL_RESET_PIN` (`src/config.h`), que saca A0
    del mask de control: sin PCINT y sin reset. Feed hold (A1) y cycle start (A2)
    siguen funcionando.
+
+El **feed hold (A1) tiene su propio debounce de 20 ms** (`CONTROL_FEED_HOLD_DEBOUNCE_MS`):
+mismo esquema de armado en la ISR y confirmación en el main loop, pero en vez de
+reiniciar setea `EXEC_FEED_HOLD` solo si el pin sigue LOW al vencer la ventana. Un
+glitch de EMI de microsegundos ya no detiene el trabajo: se cuenta en `a1=` y la
+máquina sigue cortando. Una pulsación real (> 20 ms) detiene igual que antes. Si
+`a1=` crece durante un corte, hay EMI en A1: aplicar el mismo pull-up 10 kΩ + 100 nF
+que en A0.
 
 Diagnóstico diferencial: `HARD_LIMIT`, `SOFT_LIMIT` y `HOMING` **no pueden**
 producir `SFR`; entran al bucle `[KA] ALARM` de `protocol_exec_rt_system()` y

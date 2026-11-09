@@ -44,6 +44,7 @@ sin revisar el impacto en step timing o en el contador de ms de LLP.
 | `ENABLE_BUILD_INFO_WRITE_COMMAND` | deshabilitado (`$I=` no existe) | `520` |
 | `DEBUG_KEEPALIVE` | habilitado (diagnóstico de campo) | `707` |
 | `CONTROL_RESET_DEBOUNCE_MS` | `100` ms | `713` |
+| `CONTROL_FEED_HOLD_DEBOUNCE_MS` | `20` ms (A1 feed hold) | `src/config.h` (junto al de A0) |
 | `DISABLE_CONTROL_RESET_PIN` | deshabilitado (A0 activo) | `730` |
 | `LLP_RX_PAYLOAD_SIZE` | `64` (capacidad del parser v4) | `src/llp_transport.h` |
 | `LLP_TX_LINE_BUF_SIZE` | `48` (una línea = una trama) | `src/llp_transport.h` |
@@ -91,8 +92,9 @@ Los números de línea de esta tabla son volátiles: confírmalos con
   (ver `doc/buffers.md` → "Stack"). Antes de agregar locales grandes o buffers,
   mirá `pk=` / `lim=` del keep-alive.
 - **`.noinit` está reservado para diagnóstico de resets** (`src/system.c`:
-  `last_reset_source`, `a0_transient_count`, `diag_*`). `system_diag_boot_init()`
-  tiene que ser lo primero que corre en `main()`. No metas estado normal ahí.
+  `last_reset_source`, `a0_transient_count`, `a1_transient_count`, `diag_*`).
+  `system_diag_boot_init()` tiene que ser lo primero que corre en `main()`. No metas
+  estado normal ahí.
 - **Largo de las líneas de salida:** `llp_transport_tx_byte()` corta la línea cada
   `LLP_TX_CHUNK_SIZE` (hoy 48 bytes, igual a `LLP_TX_LINE_BUF_SIZE`). Una línea más
   larga se parte en varias tramas; la trama completa (peor caso) tiene que entrar en

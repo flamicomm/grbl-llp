@@ -34,6 +34,14 @@ volatile uint8_t last_reset_source __attribute__((section(".noinit")));
 // .noinit so the count stays meaningful across a reset.
 volatile uint8_t a0_transient_count __attribute__((section(".noinit")));
 
+// Feed hold (A1) pulses filtered out by the debounce. Same rationale as
+// a0_transient_count: a growing value during a job means EMI on that pin. It is
+// reported as "a1=" in the DEBUG_KEEPALIVE line, lives in .noinit so it stays
+// meaningful across a reset, saturates at 255 and is cleared on a cold start.
+#ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+volatile uint8_t a1_transient_count __attribute__((section(".noinit")));
+#endif
+
 // ---------------------------------------------------------------------------
 // Boot diagnostics that must survive a hardware reset.
 //
@@ -72,6 +80,9 @@ uint8_t system_diag_boot_init(void)
     // Cold start: .noinit contents are undefined, do not trust them.
     last_reset_source = RESET_SRC_NONE;
     a0_transient_count = 0;
+    #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+      a1_transient_count = 0;
+    #endif
   }
 
   return preserved;
@@ -138,6 +149,15 @@ void system_set_reset_source(uint8_t src)
     last_reset_source = src;
 }
 
+#ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+// Software debounce state for the feed hold pin (A1). Volatile because written
+// by the ISR (CONTROL_INT_vect) and read by the main loop
+// (system_check_control_feed_hold_debounce). Exported so the re-init loop can
+// drop a hold armed before a soft reset (mirrors ctrl_reset_* for A0).
+volatile uint8_t ctrl_hold_pending = 0;
+volatile unsigned long ctrl_hold_time = 0;
+#endif
+
 
 void system_init()
 {
@@ -149,6 +169,9 @@ void system_init()
   #endif
   CONTROL_PCMSK |= CONTROL_MASK_USED;  // Enable specific pins of the Pin Change Interrupt
   PCICR |= (1 << CONTROL_INT);   // Enable Pin Change Interrupt
+  #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+    ctrl_hold_pending = 0;  // No stale feed hold armed across a reset
+  #endif
 }
 
 // Software debounce state for control reset pin (A0). Volatile because accessed
@@ -212,10 +235,44 @@ void system_check_control_reset_debounce()
   }
 }
 
+#ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+// Software debounce for the feed hold pin (A1), mirror of the A0 debounce.
+// Called from the main loop via protocol_exec_rt_system(), which also runs
+// inside the suspend loop. The ISR arms the timer on the falling edge and clears
+// it on release, so reaching the deadline means A1 stayed LOW continuously for
+// CONTROL_FEED_HOLD_DEBOUNCE_MS. 20 ms is imperceptible to a human and filters
+// EMI; transient pulses are counted in a1_transient_count and never stop the
+// job.
+//
+// Same critical section as A0: ctrl_hold_time is a 4-byte value rewritten by the
+// ISR and a torn read would wrap the subtraction and fire the hold early.
+// EXEC_FEED_HOLD is set outside the section.
+void system_check_control_feed_hold_debounce()
+{
+  if (!ctrl_hold_pending) { return; }
 
-// Pin change interrupt for pin-out commands, i.e. cycle start, feed hold, and reset. Sets
-// only the realtime command execute variable to have the main program execute these when
-// its ready. This works exactly like the character-based realtime commands when picked off
+  uint8_t sreg = SREG;
+  cli();
+  uint8_t pending = ctrl_hold_pending;
+  unsigned long armed_at = ctrl_hold_time;
+  unsigned long now = llp_transport_get_ms();
+  uint8_t pin_state = system_control_get_state();
+  SREG = sreg;
+
+  if (!pending || (now - armed_at) < CONTROL_FEED_HOLD_DEBOUNCE_MS) { return; }
+
+  ctrl_hold_pending = 0;
+  if (bit_istrue(pin_state, CONTROL_PIN_INDEX_FEED_HOLD)) {
+    bit_true(sys_rt_exec_state, EXEC_FEED_HOLD);  // Still LOW after debounce
+  }
+}
+#endif
+
+
+// Pin change interrupt for pin-out commands, i.e. cycle start, feed hold, and reset. For
+// reset (A0) and feed hold (A1) it only arms the debounce timer; the main program sets the
+// realtime command execute variable once the hold is confirmed. Cycle start sets it in the
+// act. This works exactly like the character-based realtime commands when picked off
 // directly from the incoming serial data stream.
 ISR(CONTROL_INT_vect)
 {
@@ -233,18 +290,29 @@ ISR(CONTROL_INT_vect)
     ctrl_reset_pending = 0;
     if (a0_transient_count < 255) { a0_transient_count++; }
   }
+  #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+    // Deferred feed hold with debounce: same arm/clear scheme as A0. The main
+    // loop sets EXEC_FEED_HOLD only if A1 is still LOW when the window expires.
+    if (bit_istrue(pin,CONTROL_PIN_INDEX_FEED_HOLD)) {
+      if (!ctrl_hold_pending) {
+        ctrl_hold_pending = 1;
+        ctrl_hold_time = llp_transport_get_ms();
+      }
+    } else if (ctrl_hold_pending) {
+      // Released before the window expired: EMI spike or contact bounce filtered.
+      ctrl_hold_pending = 0;
+      if (a1_transient_count < 255) { a1_transient_count++; }
+    }
+  #endif
   if (pin) {
     if (bit_istrue(pin,CONTROL_PIN_INDEX_CYCLE_START)) {
       bit_true(sys_rt_exec_state, EXEC_CYCLE_START);
     }
-    #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
-      if (bit_istrue(pin,CONTROL_PIN_INDEX_FEED_HOLD)) {
-        bit_true(sys_rt_exec_state, EXEC_FEED_HOLD);
-    #else
+    #ifdef ENABLE_SAFETY_DOOR_INPUT_PIN
       if (bit_istrue(pin,CONTROL_PIN_INDEX_SAFETY_DOOR)) {
         bit_true(sys_rt_exec_state, EXEC_SAFETY_DOOR);
+      }
     #endif
-    }
   }
 }
 

@@ -724,6 +724,12 @@
 // a floating A0 pin (no abort button), where longer EMI bursts are common.
 #define CONTROL_RESET_DEBOUNCE_MS 100  // ms
 
+// Software debounce for the feed hold input (A1). A1 used to set EXEC_FEED_HOLD
+// straight from the pin-change ISR, so an EMI spike (F-011) stopped the job.
+// The hold is now confirmed only when A1 stays LOW for this many milliseconds;
+// shorter pulses are counted in a1_transient_count.
+#define CONTROL_FEED_HOLD_DEBOUNCE_MS 20  // ms
+
 // Uncomment on machines with **no abort button** wired to A0 (Reset/Abort of the
 // CNC shield). A floating A0 next to a brushed spindle picks up EMI and can hold
 // the pin LOW long enough to pass the debounce, resetting the MCU mid-job. This

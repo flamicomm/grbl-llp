@@ -143,6 +143,11 @@ int main(void)
     sys_rt_exec_alarm = 0;
     sys_rt_exec_motion_override = 0;
     sys_rt_exec_accessory_override = 0;
+    #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+      // Drop a feed hold armed before this (soft) reset: it would otherwise be
+      // confirmed in the new life and park the machine in HOLD unprompted.
+      ctrl_hold_pending = 0;
+    #endif
 
     // Reset Grbl primary systems.
     serial_reset_read_buffer(); // Clear serial read buffer
