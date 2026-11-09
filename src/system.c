@@ -263,7 +263,9 @@ void system_check_control_feed_hold_debounce()
 
   ctrl_hold_pending = 0;
   if (bit_istrue(pin_state, CONTROL_PIN_INDEX_FEED_HOLD)) {
-    bit_true(sys_rt_exec_state, EXEC_FEED_HOLD);  // Still LOW after debounce
+    // Atomic read-modify-write: the control/UART ISR can set other bits in
+    // sys_rt_exec_state, and a raw |= would lose them.
+    system_set_exec_state_flag(EXEC_FEED_HOLD);  // Still LOW after debounce
   }
 }
 #endif

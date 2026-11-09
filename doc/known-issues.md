@@ -145,9 +145,16 @@ El **feed hold (A1) tiene su propio debounce de 20 ms** (`CONTROL_FEED_HOLD_DEBO
 mismo esquema de armado en la ISR y confirmación en el main loop, pero en vez de
 reiniciar setea `EXEC_FEED_HOLD` solo si el pin sigue LOW al vencer la ventana. Un
 glitch de EMI de microsegundos ya no detiene el trabajo: se cuenta en `a1=` y la
-máquina sigue cortando. Una pulsación real (> 20 ms) detiene igual que antes. Si
-`a1=` crece durante un corte, hay EMI en A1: aplicar el mismo pull-up 10 kΩ + 100 nF
-que en A0.
+máquina sigue cortando. Una pulsación real (> 20 ms) detiene igual que antes.
+
+`a1=` cuenta **solo pulsos filtrados** (A1 LOW durante menos de 20 ms). Eso cambia
+cómo se lee un false hold:
+
+- **False hold con `a1=0`**: A1 estuvo LOW **≥ 20 ms** de forma continua. No fue un
+  glitch corto: o alguien/botón sostuvo el pin, o hubo EMI sostenida. La máquina
+  queda en `Hold:0` esperando `~` (o reset), igual que con un `!` del host.
+- **`a1>0`**: hubo glitches cortos en A1 y el debounce los filtró (no detuvieron el
+  trabajo). Aplicar el mismo pull-up 10 kΩ + 100 nF que en A0.
 
 Diagnóstico diferencial: `HARD_LIMIT`, `SOFT_LIMIT` y `HOMING` **no pueden**
 producir `SFR`; entran al bucle `[KA] ALARM` de `protocol_exec_rt_system()` y

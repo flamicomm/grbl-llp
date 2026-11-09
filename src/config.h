@@ -711,11 +711,16 @@
 // Uncomment to restore them.
 // #define ENABLE_NONMODAL_EXTRA
 
-// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=...
-// sp=... u=... re=... rt=... rd=... td=... ca=...] every 10s via
-// protocol_execute_realtime(). Helps diagnose MCU hangs, LLP traffic problems and
-// EMI on the control pins during a job (ca = A0 pulses filtered by the debounce).
-// Measure the flash cost with avr-size before enabling it on a full build.
+// Enable debug keep-alive: prints four [DBG:...] lines every 10s via
+// protocol_execute_realtime():
+//   [DBG:t=... s=... sp=... bf=...]
+//   [DBG:tx=... rx=... u=... re=... rt=...]
+//   [DBG:rd=... td=... ca=... a1=... pk=...]
+//   [DBG:ack=... dup=... busy=...]
+// Helps diagnose MCU hangs, LLP traffic problems and EMI on the control pins
+// during a job (ca = A0 pulses filtered by the debounce, a1 = A1 feed hold
+// pulses filtered by the debounce). Measure the flash cost with avr-size before
+// enabling it on a full build.
 #define DEBUG_KEEPALIVE
 
 // Software debounce for control reset pin (A0). Filters EMI transients and mechanical

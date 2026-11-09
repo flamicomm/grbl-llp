@@ -307,8 +307,9 @@ void protocol_exec_rt_system()
   // (feed hold, safety door, sleep), where only this function is called.
   system_check_control_reset_debounce();
   #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
-    // Same for the A1 feed hold debounce (20 ms; a hold confirmation is a no-op
-    // when already in HOLD/IDLE).
+    // Same for the A1 feed hold debounce: a confirmed hold while IDLE/HOLD
+    // enters the suspend loop, as in stock Grbl; while A1 stays LOW the ISR
+    // re-arms on any control-pin edge (same as stock).
     system_check_control_feed_hold_debounce();
   #endif
 
