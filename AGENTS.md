@@ -86,6 +86,7 @@ Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `REA
 | `[MSG:RST:SRC:HARD_LIMIT/SOFT_LIMIT]` | Alarma de límites | revisar recorrido / `$20`/`$21` |
 | `[DBG:... sp=...]` con `sp` muy bajo | Stack profundo | revisar buffers/stack (`doc/buffers.md`) |
 | `[DBG:... ca=...]` creciendo durante un corte | EMI en A0 (pulsos filtrados por el debounce) | pull-up 10 k + 100 nF, desconectar A0 o `DISABLE_CONTROL_RESET_PIN` |
+| `[DBG:... a1=...]` creciendo durante un corte | EMI en A1 (feed hold filtrado por el debounce de 20 ms) | pull-up 10 k + 100 nF en A1; revisar el cableado del botón de feed hold |
 | `[DBG:ack=... dup=...]` con `dup` creciendo | El host retransmite: se perdió un ACK o un comando | normal si es esporádico (el dedup lo absorbe); si crece siempre, revisar UART/EMI |
 | `[DBG:... busy=...]` creciendo | Comandos diferidos por falta de espacio en el ring de línea | revisar `RX_BUFFER_SIZE` / ritmo del host (`doc/buffers.md`) |
 

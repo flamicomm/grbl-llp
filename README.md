@@ -275,7 +275,7 @@ cada una dentro de una sola trama LLP):
 ```
 [DBG:t=... s=... sp=... bf=...]
 [DBG:tx=... rx=... u=... re=... rt=...]
-[DBG:rd=... td=... ca=... pk=...]
+[DBG:rd=... td=... ca=... a1=... pk=...]
 ```
 
 En cada **reset de CPU** imprime además, antes del banner:
@@ -304,7 +304,9 @@ imprime `[MSG:RST:SRC:<origen>]` y **no** aparece `[MSG:BOOT]`. Orígenes:
 `RST` (`$RST`), `HARD_LIMIT`/`SOFT_LIMIT`, `HOMING`, `OTHER`.
 
 El campo `ca=` cuenta los pulsos de A0 descartados por el debounce (EMI) y ahora
-se conserva entre resets (vive en `.noinit`). Detalle y mitigaciones en
+se conserva entre resets (vive en `.noinit`). El campo `a1=` hace lo mismo con el
+feed hold (A1), que también pasa por un debounce de 20 ms: un pulso más corto ya no
+detiene el trabajo, solo incrementa el contador. Detalle y mitigaciones en
 [`doc/known-issues.md`](doc/known-issues.md).
 
 ## Documentación técnica interna

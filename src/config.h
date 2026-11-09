@@ -711,11 +711,16 @@
 // Uncomment to restore them.
 // #define ENABLE_NONMODAL_EXTRA
 
-// Enable debug keep-alive: prints [DBG:t=... st=... tx=... rx=... bf=... li=...
-// sp=... u=... re=... rt=... rd=... td=... ca=...] every 10s via
-// protocol_execute_realtime(). Helps diagnose MCU hangs, LLP traffic problems and
-// EMI on the control pins during a job (ca = A0 pulses filtered by the debounce).
-// Measure the flash cost with avr-size before enabling it on a full build.
+// Enable debug keep-alive: prints four [DBG:...] lines every 10s via
+// protocol_execute_realtime():
+//   [DBG:t=... s=... sp=... bf=...]
+//   [DBG:tx=... rx=... u=... re=... rt=...]
+//   [DBG:rd=... td=... ca=... a1=... pk=...]
+//   [DBG:ack=... dup=... busy=...]
+// Helps diagnose MCU hangs, LLP traffic problems and EMI on the control pins
+// during a job (ca = A0 pulses filtered by the debounce, a1 = A1 feed hold
+// pulses filtered by the debounce). Measure the flash cost with avr-size before
+// enabling it on a full build.
 #define DEBUG_KEEPALIVE
 
 // Software debounce for control reset pin (A0). Filters EMI transients and mechanical
@@ -723,6 +728,12 @@
 // EMI transients (<1ms). Increased to 100ms for machines with a brushed spindle and
 // a floating A0 pin (no abort button), where longer EMI bursts are common.
 #define CONTROL_RESET_DEBOUNCE_MS 100  // ms
+
+// Software debounce for the feed hold input (A1). A1 used to set EXEC_FEED_HOLD
+// straight from the pin-change ISR, so an EMI spike (F-011) stopped the job.
+// The hold is now confirmed only when A1 stays LOW for this many milliseconds;
+// shorter pulses are counted in a1_transient_count.
+#define CONTROL_FEED_HOLD_DEBOUNCE_MS 20  // ms
 
 // Uncomment on machines with **no abort button** wired to A0 (Reset/Abort of the
 // CNC shield). A floating A0 next to a brushed spindle picks up EMI and can hold

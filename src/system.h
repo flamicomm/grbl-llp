@@ -180,6 +180,11 @@ extern volatile uint8_t last_reset_source;
 // A0 reset/abort pulses filtered by the debounce (EMI indicator, "ca=" in the
 // debug keepalive). Saturates at 255.
 extern volatile uint8_t a0_transient_count;
+#ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+// A1 feed hold pulses filtered by the debounce (EMI indicator, "a1=" in the
+// debug keepalive). Saturates at 255.
+extern volatile uint8_t a1_transient_count;
+#endif
 void system_set_reset_source(uint8_t src);
 
 // Boot diagnostics kept in .noinit (survive hardware resets). Call
@@ -207,6 +212,16 @@ uint8_t system_control_get_state();
 extern volatile uint8_t ctrl_reset_pending;
 extern volatile unsigned long ctrl_reset_time;
 void system_check_control_reset_debounce();
+
+#ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+// Software debounce for the feed hold pin (A1). Same mechanism as A0, with
+// CONTROL_FEED_HOLD_DEBOUNCE_MS defined in config.h. ctrl_hold_pending is
+// cleared from the re-init loop after a soft reset so a hold armed before it
+// cannot fire in the new life.
+extern volatile uint8_t ctrl_hold_pending;
+extern volatile unsigned long ctrl_hold_time;
+void system_check_control_feed_hold_debounce();
+#endif
 
 // Returns if safety door is open or closed, based on pin state.
 uint8_t system_check_safety_door_ajar();

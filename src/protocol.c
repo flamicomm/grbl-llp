@@ -274,6 +274,10 @@ void protocol_execute_realtime()
         printInteger(stats.tx_dropped);
         printPgmString(PSTR(" ca="));
         print_uint8_base10(a0_transient_count);
+        #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+          printPgmString(PSTR(" a1="));
+          print_uint8_base10(a1_transient_count);
+        #endif
         // Peak stack usage since the last boot (watermark, ISRs included).
         printPgmString(PSTR(" pk="));
         print_uint32_base10(system_diag_stack_peak());
@@ -302,6 +306,12 @@ void protocol_exec_rt_system()
   // protocol_execute_realtime) so it also runs inside the suspend loop
   // (feed hold, safety door, sleep), where only this function is called.
   system_check_control_reset_debounce();
+  #ifndef ENABLE_SAFETY_DOOR_INPUT_PIN
+    // Same for the A1 feed hold debounce: a confirmed hold while IDLE/HOLD
+    // enters the suspend loop, as in stock Grbl; while A1 stays LOW the ISR
+    // re-arms on any control-pin edge (same as stock).
+    system_check_control_feed_hold_debounce();
+  #endif
 
   uint8_t rt_exec; // Temp variable to avoid calling volatile multiple times.
   rt_exec = sys_rt_exec_alarm; // Copy volatile sys_rt_exec_alarm.
