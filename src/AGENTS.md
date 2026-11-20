@@ -87,6 +87,11 @@ Los números de línea de esta tabla son volátiles: confírmalos con
   comando.
 - Un `SEQ` repetido se **re-ACKea y se descarta** (`llp4_rel_rx_accept()`): es lo
   que evita ejecutar dos veces un movimiento cuando se pierde el ACK.
+- Un `HELLO` (canal 3, payload `[SESSION (0..1)]`) reinicia el dedup y se procesa
+  **con o sin payload**: `LEN=0` es legal (RELIABILITY.md §3). No se ACKea. El
+  contador acumulado `dup=` (`rx_duplicates`) **no** se reinicia: es diagnóstico,
+  no estado de sesión, y por eso `llp_transport_rx_byte()` lo preserva alrededor
+  de `llp4_rel_rx_init()`.
 - El canal 0 (stream grbl) y los realtime no cambian: la clasificación es por
   `channel` y el resto se ignora sin error.
 

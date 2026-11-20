@@ -3,9 +3,9 @@
 
   What is under test: the parts of `src/llp_transport.c` that only the bench
   could exercise until now — the atomic acceptance of an R1 command against
-  grbl's line ring, duplicate suppression and re-ACK, the HELLO reset, the
-  SEQ wrap, the TX chunking of long lines, byte stuffing of 0xAA in a payload,
-  and the inter-byte timeout.
+  grbl's line ring, duplicate suppression and re-ACK, the HELLO reset (with and
+  without payload), the SEQ wrap, the TX chunking of long lines, byte stuffing
+  of 0xAA in a payload, and the inter-byte timeout.
 
   How it works: this file includes `src/llp_transport.c` directly, so the
   module's `static` state (the millisecond counter, the R1 receiver, the parser)
@@ -285,9 +285,9 @@ static void test_hello_resets_dedup_state(void)
     feed_command(5, line, (uint8_t)(sizeof(line) - 1u));
     llp_transport_get_stats(&stats);
     TEST_ASSERT_EQUAL_UINT16(2, stats.rx_commands);
-    /* HELLO restarts the whole receiver state, duplicate counter included:
-     * `dup=` in the `#` report starts again from zero for the new session. */
-    TEST_ASSERT_EQUAL_UINT16(0, stats.rx_duplicates);
+    /* Only the dedup state restarts: `dup=` is a cumulative statistic and must
+     * not go backwards after a reconnect. */
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_duplicates);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -450,6 +450,77 @@ static void test_gap_over_timeout_reports_timeout(void)
     TEST_ASSERT_EQUAL_UINT16(1, stats.rx_commands);
 }
 
+
+/* ------------------------------------------------------------------------- */
+/* (h) An empty HELLO (LEN=0) is a valid session reset.                      */
+/* ------------------------------------------------------------------------- */
+
+static void test_empty_hello_resets_dedup_state(void)
+{
+    static const uint8_t line[] = "G3X3\n";
+    llp_stats_t stats;
+
+    feed_command(4, line, (uint8_t)(sizeof(line) - 1u));
+    feed_command(4, line, (uint8_t)(sizeof(line) - 1u)); /* duplicate */
+
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_commands);
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_duplicates);
+    TEST_ASSERT_EQUAL_UINT16(2, stats.rx_frames);
+
+    /* Flush the ACK the duplicate left pending, then watch the HELLO. */
+    llp_transport_poll();
+    drain_tx_ring();
+    TEST_ASSERT_EQUAL_INT(1, frame_count);
+
+    /* RELIABILITY.md §3: the HELLO payload is [SESSION (0..1)] and opaque, so
+     * zero bytes is a legal frame and must start a new session. It is never
+     * ACKed, and being a delivered frame it counts in rx_frames. */
+    frame_count = 0;
+    feed_frame((uint8_t)LLP4_REL_CH_HELLO, NULL, 0);
+    llp_transport_poll();
+    drain_tx_ring();
+    TEST_ASSERT_EQUAL_INT(0, frame_count);
+
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(3, stats.rx_frames);
+
+    /* The same SEQ is a new command in the new session. */
+    feed_command(4, line, (uint8_t)(sizeof(line) - 1u));
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(2, stats.rx_commands);
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_duplicates);
+}
+
+/* ------------------------------------------------------------------------- */
+/* (i) The duplicate counter is cumulative: HELLO does not reset it.         */
+/* ------------------------------------------------------------------------- */
+
+static void test_duplicates_survive_hello(void)
+{
+    static const uint8_t line[] = "G4X4\n";
+    llp_stats_t stats;
+
+    feed_command(6, line, (uint8_t)(sizeof(line) - 1u));
+    feed_command(6, line, (uint8_t)(sizeof(line) - 1u)); /* duplicate */
+
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_duplicates);
+
+    feed_frame((uint8_t)LLP4_REL_CH_HELLO, NULL, 0);
+
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(1, stats.rx_duplicates);
+
+    /* The new session restarts SEQ at 0; its own duplicate keeps accumulating
+     * on top of the previous session's count. */
+    feed_command(0, line, (uint8_t)(sizeof(line) - 1u));
+    feed_command(0, line, (uint8_t)(sizeof(line) - 1u));
+    llp_transport_get_stats(&stats);
+    TEST_ASSERT_EQUAL_UINT16(2, stats.rx_duplicates);
+    TEST_ASSERT_EQUAL_UINT16(2, stats.rx_commands);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Runner                                                                    */
 /* ------------------------------------------------------------------------- */
@@ -476,5 +547,7 @@ int main(int argc, char **argv)
     RUN_TEST(test_long_line_is_split_in_two_frames);
     RUN_TEST(test_magic_byte_in_payload_keeps_stuffing);
     RUN_TEST(test_gap_over_timeout_reports_timeout);
+    RUN_TEST(test_empty_hello_resets_dedup_state);
+    RUN_TEST(test_duplicates_survive_hello);
     return UNITY_END();
 }

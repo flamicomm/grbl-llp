@@ -42,7 +42,9 @@ typedef struct {
     uint16_t tx_dropped;
     uint16_t rx_raw_bytes;
     uint16_t rx_commands;   /* Profile R1: new command frames delivered      */
-    uint16_t rx_duplicates; /* Profile R1: retransmissions suppressed        */
+    uint16_t rx_duplicates; /* Profile R1: retransmissions suppressed
+                             * (cumulative across sessions: HELLO does not
+                             * reset it, unlike the dedup state itself)        */
     uint16_t rx_busy;       /* Profile R1: commands deferred (no ring space) */
     uint16_t tx_acks;       /* Profile R1: ACK frames emitted                */
 } llp_stats_t;

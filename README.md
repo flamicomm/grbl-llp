@@ -184,6 +184,11 @@ ACK     (canal 2):  [SEQ]               MCU  -> host
 - **Ventana 1**: un comando en vuelo. El host no manda el siguiente hasta el ACK.
 - **Dedup**: el MCU guarda `last_seq`; un `SEQ` repetido se re-ACKea y **se
   descarta** (`llp4_rel_rx_accept()`), así un ACK perdido nunca ejecuta dos veces.
+- **Sesión nueva (HELLO, canal 3)**: payload `[SESSION (0..1)]`, opaco y **puede
+  ir vacío**. El MCU reinicia `last_seq` sin ACKear, para que un emisor que
+  reinicia su `SEQ` en 0 no pierda su primer comando por colisión. El contador
+  acumulado `dup=` **no** se reinicia con HELLO: es diagnóstico, no estado de
+  sesión.
 - **Aceptación atómica**: si los bytes no entran completos en el ring de línea
   (`RX_BUFFER_SIZE = 80`), **no se consume el `SEQ` ni se ACKea**; la
   retransmisión lo reintenta después. La presión de buffer se convierte en
