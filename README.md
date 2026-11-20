@@ -136,6 +136,18 @@ raíz de su propio repo (p. ej. una copia dentro de un monorepo), el identificad
 **versionados** sin commitear lleva sufijo `-dirty` (`[VER:1.1h.<sha7>-dirty:]`); los
 archivos no versionados no lo activan.
 
+### Tests en host (integración LLP)
+
+```bash
+pio test -e native_test --without-uploading
+```
+
+Compila `src/llp_transport.c` en el host (Unity) y cubre la lógica que sólo se
+probaba en banco: aceptación atómica contra el ring de línea, dedup + re-ACK,
+HELLO, wrap de `SEQ`, chunking de líneas largas, stuffing de `0xAA` y timeout
+inter-byte. Los stubs de AVR (`test/support/avr/`) y de Grbl
+(`test/support/native_llp_stubs.h`) son sólo del test: `uno` y `nano` no cambian.
+
 ## Streaming de G-code
 
 El script `scripts/stream_gcode.py` envía archivos G-code completos al Arduino vía LLP:
