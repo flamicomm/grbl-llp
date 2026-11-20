@@ -136,6 +136,18 @@ raíz de su propio repo (p. ej. una copia dentro de un monorepo), el identificad
 **versionados** sin commitear lleva sufijo `-dirty` (`[VER:1.1h.<sha7>-dirty:]`); los
 archivos no versionados no lo activan.
 
+### Tests en host (integración LLP)
+
+```bash
+pio test -e native_test --without-uploading
+```
+
+Compila `src/llp_transport.c` en el host (Unity) y cubre la lógica que sólo se
+probaba en banco: aceptación atómica contra el ring de línea, dedup + re-ACK,
+HELLO, wrap de `SEQ`, chunking de líneas largas, stuffing de `0xAA` y timeout
+inter-byte. Los stubs de AVR (`test/support/avr/`) y de Grbl
+(`test/support/native_llp_stubs.h`) son sólo del test: `uno` y `nano` no cambian.
+
 ## Streaming de G-code
 
 El script `scripts/stream_gcode.py` envía archivos G-code completos al Arduino vía LLP:
@@ -172,6 +184,11 @@ ACK     (canal 2):  [SEQ]               MCU  -> host
 - **Ventana 1**: un comando en vuelo. El host no manda el siguiente hasta el ACK.
 - **Dedup**: el MCU guarda `last_seq`; un `SEQ` repetido se re-ACKea y **se
   descarta** (`llp4_rel_rx_accept()`), así un ACK perdido nunca ejecuta dos veces.
+- **Sesión nueva (HELLO, canal 3)**: payload `[SESSION (0..1)]`, opaco y **puede
+  ir vacío**. El MCU reinicia `last_seq` sin ACKear, para que un emisor que
+  reinicia su `SEQ` en 0 no pierda su primer comando por colisión. El contador
+  acumulado `dup=` **no** se reinicia con HELLO: es diagnóstico, no estado de
+  sesión.
 - **Aceptación atómica**: si los bytes no entran completos en el ring de línea
   (`RX_BUFFER_SIZE = 80`), **no se consume el `SEQ` ni se ACKea**; la
   retransmisión lo reintenta después. La presión de buffer se convierte en

@@ -277,6 +277,20 @@ static void llp_process_command(const uint8_t *payload, uint16_t len)
     llp_ack_pending = 1;
 }
 
+/* Feed one byte from the UART ISR.
+ *
+ * Channel dispatch (the parser has already validated CRC and stuffing):
+ *   - COMMAND (1): needs `len > 0` (payload is `[SEQ][DATA...]`); accepted
+ *     atomically against the line ring, then ACKed from the main loop.
+ *   - HELLO (3): processed with or without payload. RELIABILITY.md §3 defines
+ *     its payload as `[SESSION (0..1)]`, so an empty HELLO is a valid frame and
+ *     must reset the dedup state; it is never ACKed.
+ *   - stream (0): needs `len > 0` (raw grbl bytes).
+ *   - anything else: reserved, ignored, never an error.
+ *
+ * Every delivered frame counts in `rx_frames`, payload or not: LEN=0 is legal
+ * on HELLO, so the count cannot be conditioned on the length without lying
+ * about the frames that are actually on the wire. */
 void llp_transport_rx_byte(uint8_t byte)
 {
     int rc;
@@ -288,19 +302,29 @@ void llp_transport_rx_byte(uint8_t byte)
 
     if (rc == LLP4_EV_FRAME) {
         uint8_t len = llp_rx_parser.length;
-        if (len > 0) {
-            llp_counter_inc(&llp_rx_frame_count);
-            if (llp_rx_parser.channel == LLP4_REL_CH_COMMAND) {
+
+        llp_counter_inc(&llp_rx_frame_count);
+
+        if (llp_rx_parser.channel == LLP4_REL_CH_COMMAND) {
+            if (len > 0) {
                 llp_process_command(llp_rx_payload, len);
-            } else if (llp_rx_parser.channel == LLP4_REL_CH_HELLO) {
-                /* New session (the sender rebooted or reconnected): its SEQ
-                 * restarts, so the dedup state must not survive. */
-                llp4_rel_rx_init(&llp_rel_rx);
-            } else if (llp_rx_parser.channel == LLP_RX_CHANNEL) {
+            }
+        } else if (llp_rx_parser.channel == LLP4_REL_CH_HELLO) {
+            /* New session (the sender rebooted or reconnected): its SEQ
+             * restarts from zero, so the dedup state must not survive. The
+             * duplicate counter is a cumulative diagnostic statistic, not
+             * session state: `llp4_rel_rx_init()` clears it, and `dup=` in the
+             * `#` report would go backwards after every reconnect, so keep it
+             * across the reset. */
+            uint16_t duplicates = llp_rel_rx.duplicates;
+            llp4_rel_rx_init(&llp_rel_rx);
+            llp_rel_rx.duplicates = duplicates;
+        } else if (llp_rx_parser.channel == LLP_RX_CHANNEL) {
+            if (len > 0) {
                 llp_process_payload(llp_rx_payload, len);
             }
-            /* Other channels are reserved: ignored, never an error. */
         }
+        /* Other channels are reserved: ignored, never an error. */
     } else if (rc < 0) {
         llp_counter_inc(&llp_rx_error_count);
         if (rc == -(int)LLP4_ERR_TIMEOUT) {

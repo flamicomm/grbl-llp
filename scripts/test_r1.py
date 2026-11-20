@@ -6,14 +6,16 @@ exercises the receiver side of Profile R1 (llp-spec docs/RELIABILITY.md):
 
     COMMAND (channel 1): [SEQ][DATA...]
     ACK     (channel 2): [SEQ]
-    HELLO   (channel 3): [session]
+    HELLO   (channel 3): [SESSION (0..1)]   (may be empty)
 
 What it checks:
 
-  clean      every command is ACKed and answered with exactly one "ok"
-  duplicate  a retransmission is ACKed again and produces no second "ok"
-  same-seq   a different payload with an already-seen SEQ is ACKed, not run
-  wrap       SEQ 255 -> 0 is delivered twice
+  clean       every command is ACKed and answered with exactly one "ok"
+  duplicate   a retransmission is ACKed again and produces no second "ok"
+  same-seq    a different payload with an already-seen SEQ is ACKed, not run
+  wrap        SEQ 255 -> 0 is delivered twice
+  empty-hello an empty HELLO (LEN=0, legal per RELIABILITY.md §3) resets the
+              dedup, and `dup=` survives the one-byte HELLO the ESP sends
 
 The sender side is the reference implementation in ``llp_rel.py`` (same state
 machine as the C firmware), so this script also exercises it against hardware.
@@ -70,6 +72,10 @@ class Bench:
         self.text: list[str] = []
         self.retransmits = 0
         self.line_buf = ""
+        # DEBUG_KEEPALIVE emits `[DBG:ack=.. dup=.. busy=..]` every ~10.24 s.
+        # The Nano build compiles it out, so `dup` cannot be read there.
+        self.saw_keepalive = False
+        self.keepalive_checked = False
 
     def close(self) -> None:
         self.ser.close()
@@ -122,6 +128,8 @@ class Bench:
                 continue
             if line == "ok":
                 self.oks += 1
+            if line.startswith("[DBG:"):
+                self.saw_keepalive = True
             if line == "ok" or line.startswith(("[MSG", "[DBG", "error")):
                 self.text.append(line)
 
@@ -157,6 +165,31 @@ class Bench:
             self.pump(0.005)
         return True, attempts
 
+    def read_dup(self, seconds: float = 11.5) -> int | None:
+        """Return `dup=` from the next keep-alive block, or None if the build
+        does not emit it.
+
+        Only lines received *after* this call are considered. The keep-alive is
+        emitted every ~10.24 s (~11.5 s window with margin). A build with
+        `DISABLE_DEBUG_KEEPALIVE` (the Nano env) never prints it: that returns
+        None and the caller reports SKIP instead of FAIL.
+        """
+        start = len(self.text)
+        self.keepalive_checked = True
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            self.pump(0.2)
+            for line in self.text[start:]:
+                if "dup=" not in line:
+                    continue
+                for token in line.split():
+                    if token.startswith("dup="):
+                        try:
+                            return int(token.split("=", 1)[1])
+                        except ValueError:
+                            return None
+        return None
+
 
 class Report:
     def __init__(self) -> None:
@@ -166,6 +199,9 @@ class Report:
         print(f"  [{'PASS' if ok else 'FAIL'}] {label}")
         if not ok:
             self.failed += 1
+
+    def skip(self, label: str) -> None:
+        print(f"  [SKIP] {label}")
 
 
 def main() -> int:
@@ -235,8 +271,51 @@ def main() -> int:
         report.check(ok255 and ok0 and link.oks == 2,
                      f"255 y 0 entregados (ok={link.oks})")
 
+        print("== T5: HELLO vacío (LEN=0) ==")
+        # The ESP always sends a one-byte session marker, so this legal form
+        # (RELIABILITY.md §3: HELLO payload is [SESSION (0..1)]) is never
+        # exercised in the field. Step 1: a duplicate of the last SEQ, so the
+        # `dup` counter is known to be non-zero before the HELLO.
+        dup_seq = link.last_acked_seq
+        link.acks.clear()
+        link.oks = 0
+        link.write_frame(rel.CH_COMMAND, rel.command_payload(dup_seq, b"G4 P0\n"))
+        link.pump(0.3)
+        report.check(link.acks == [dup_seq] and link.oks == 0,
+                     f"duplicado previo absorbido (acks={link.acks}, ok={link.oks})")
+
+        # Step 2: an ordinary v4 frame on channel 3 with an empty payload.
+        link.write_frame(rel.CH_HELLO, b"")
+
+        # Step 3: the same SEQ must now be a NEW command of the new session
+        # (on a firmware that ignores an empty HELLO it is deduped: ACK, no ok).
+        link.acks.clear()
+        link.oks = 0
+        link.seq = dup_seq
+        delivered, _ = link.command(b"G4 P0\n")
+        link.pump(0.3)
+        report.check(delivered and link.oks == 1,
+                     f"mismo SEQ ({dup_seq}) entregado tras HELLO vacío (ok={link.oks})")
+
+        # Step 4: `dup` is cumulative across sessions (T2 + T3 + this T5
+        # duplicate = 3). The form that used to zero it is the one-byte session
+        # marker the ESP actually sends (the receiver reset ran for it), so
+        # send that one and read the counter afterwards. With an empty HELLO
+        # the old firmware never reached the reset, which is why step 2 fails
+        # there instead.
+        # Note: the keep-alive block may be in flight when the HELLO is sent
+        # (~9 ms of a ~10.24 s period), so an unlucky run can read a pre-HELLO
+        # block; rerun if the value looks inconsistent.
+        link.write_frame(rel.CH_HELLO, rel.hello_payload())
+        dup = link.read_dup()
+        if dup is None:
+            report.skip("dup= no disponible: build sin DEBUG_KEEPALIVE (correr en UNO)")
+        else:
+            report.check(dup >= 3, f"dup acumulado sobrevive al HELLO (dup={dup})")
+
         print("== estado del enlace ==")
-        link.pump(10.5)  # wait for the keep-alive block
+        if not link.saw_keepalive and not link.keepalive_checked:
+            link.pump(10.5)  # wait for the keep-alive block
         for line in link.text:
             if line.startswith("[DBG:"):
                 print(f"  {line}")
