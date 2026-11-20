@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   usa G0/G1, G38.x y G92.
 - `$RST=*`, `$RST=$` y `$RST=#` se conservan: apagarlos ahorra <10 B y `$RST=$` es parte
   del procedimiento de reseteo de EEPROM post-flash.
+- **Nano sin keep-alive de depuración**: el entorno `nano` compila con
+  `-D DISABLE_DEBUG_KEEPALIVE`, así que no gasta ~784 B de flash en las líneas `[DBG:...]`
+  (774 B del keep-alive + 10 B del `up=?`); a cambio pierde ese diagnóstico de campo
+  (sin `pk=`, y `up=?` en el boot porque no se mide). El `uno` lo conserva.
 
 ### Fixed
 - `G3` con `ENABLE_ARC_SUPPORT` apagado caía sin etiqueta `case` y terminaba en la rama de

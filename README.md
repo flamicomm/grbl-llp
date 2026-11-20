@@ -62,8 +62,8 @@ Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (error
 | Paradas M0/M1/M2/M30 | Pausan/resetean programa | **No-op** (stream no se cuelga) |
 | Cambio de herramienta (M6) | Soportado | **Error:20** (no soportado) |
 | Probe auto-report (G38.x) | No disponible | `[PRB:x,y,z:N]` automático tras cada probe |
-| Flash usado | ~93% (Grbl original) | **84.2%** UNO / **88.4%** Nano (optimizado para PCB) |
-| RAM usada | ~80% | **67.2%** |
+| Flash usado | ~93% (Grbl original) | Compilado con las features opcionales apagadas (ver "Flash y RAM") |
+| RAM usada | ~80% | Ver "Flash y RAM" |
 
 ## Archivos agregados/modificados clave
 
@@ -223,11 +223,23 @@ conteo es también evidencia del replay del CH340 (F-018).
 
 ## Flash y RAM
 
-Medido con `avr-size` sobre el build actual (`pio run -e uno` / `-e nano`, `-Os`):
+Medí el build actual con `avr-size` (los números cambian con cada commit, así que no
+se citan acá; el `nano` además compila distinto, ver abajo):
 
-- **UNO**: 84.2% (27148/32256 bytes) · **Nano**: 88.4% (27148/30720 bytes)
-- **RAM**: 67.2% (1377/2048 bytes)
-- **Solo `-Os`**: `-O0` desborda flash
+```bash
+pio run -e uno
+pio run -e nano
+~/.platformio/packages/toolchain-atmelavr/bin/avr-size --format=avr --mcu=atmega328p \
+  .pio/build/uno/firmware.elf
+~/.platformio/packages/toolchain-atmelavr/bin/avr-size --format=avr --mcu=atmega328p \
+  .pio/build/nano/firmware.elf
+```
+
+- **Solo `-Os`**: `-O0` desborda flash.
+- **Nano sin keep-alive de depuración**: el entorno `nano` agrega
+  `-D DISABLE_DEBUG_KEEPALIVE` (ver `platformio.ini`), así que su flash es menor
+  que la del `uno` y le faltan las líneas `[DBG:...]` y el `up=` medido del boot
+  (sale `?`).
 
 El espacio libre no es casual: `src/config.h` tiene switches para compilar fuera G-code
 que esta máquina no usa. Los ahorros están medidos con `avr-size` (ver el bloque
@@ -238,10 +250,14 @@ que esta máquina no usa. Los ahorros están medidos con `avr-size` (ver el bloq
 | `ENABLE_ARC_SUPPORT` (apagado) | ~3220 B | G2/G3: parsing, `mc_arc()` y libm (`atan2`/`sqrt`) |
 | `ENABLE_NONMODAL_EXTRA` (apagado) | ~500 B | G10, G28/G30, G28.1/G30.1 y G53 (G92 se conserva) |
 | `N_STARTUP_LINE 0` | ~290 B | startup blocks y comando `$N` |
-| `DEBUG_KEEPALIVE` (encendido) | ~750 B | líneas `[DBG:...]` cada 10 s |
+| `DEBUG_KEEPALIVE` (encendido) | ~774 B | líneas `[DBG:...]` cada 10 s y el `up=` del boot |
 
-`DEBUG_KEEPALIVE` está encendido a propósito para la validación del perfil R1; apagarlo
-deja el UNO en ~82% de flash. `$RST=*`, `$RST=$` y `$RST=#` se conservan: el procedimiento
+`DEBUG_KEEPALIVE` queda encendido por defecto (`src/config.h`) porque es el diagnóstico
+de campo del perfil R1; apagarlo baja el flash pero pierde esas líneas. El entorno
+`nano` lo apaga desde `platformio.ini` para conservar margen: ahí no hay uptime ni
+`ca=`/`a1=`/`pk=` (nadie marca el pasaje del main loop) y `up=` en `[MSG:BOOT:...]`
+sale **`?`**, porque no se midió.
+`$RST=*`, `$RST=$` y `$RST=#` se conservan: el procedimiento
 de reseteo de EEPROM de más abajo depende de `$RST=$`.
 
 Con `ENABLE_ARC_SUPPORT` apagado, una línea G2/G3 responde `error:20` (no hay
@@ -291,7 +307,8 @@ El cuelgue al primer movimiento (antes reportado como "Z-axis bug" o "G2/G3 bug"
 
 ### Diagnóstico de resets
 
-`DEBUG_KEEPALIVE` está habilitado por defecto y emite cada 10 s (en tres líneas,
+`DEBUG_KEEPALIVE` está habilitado por defecto (el entorno `nano` lo apaga, ver
+"Flash y RAM") y emite cada 10 s (en tres líneas,
 cada una dentro de una sola trama LLP):
 
 ```
@@ -311,7 +328,9 @@ En cada **reset de CPU** imprime además, antes del banner:
 
 `n` cuenta reinicios desde el último encendido, `m` indica si la RAM se conservó
 (reset) o hubo power-on, y `up` es el uptime del último pasaje del main loop de la
-vida anterior (sirve para distinguir un reset inmediato de un cuelgue previo).
+vida anterior (sirve para distinguir un reset inmediato de un cuelgue previo). Un
+build sin `DEBUG_KEEPALIVE` (el `nano`) imprime `up=?`: no hay uptime medido, y un
+`0` se confundiría con una medición real.
 `vcc` estima la alimentación con el bandgap interno de 1.1 V
 (`Vcc = BANDGAP_MV × 1024 / ADC`, ver `BANDGAP_MV` en `src/config.h`) **en el
 momento del arranque**: un sag transitorio ya recuperado puede leerse normal y un

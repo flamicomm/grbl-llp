@@ -49,7 +49,7 @@ sin revisar el impacto en step timing o en el contador de ms de LLP.
 | `CHECK_LIMITS_AT_INIT` | deshabilitado (sin switches) | `230` |
 | `REPORT_FIELD_*` | deshabilitados, salvo `LINE_NUMBERS` | `269-274` |
 | `ENABLE_BUILD_INFO_WRITE_COMMAND` | deshabilitado (`$I=` no existe) | `520` |
-| `DEBUG_KEEPALIVE` | habilitado (diagnóstico de campo) | `707` |
+| `DEBUG_KEEPALIVE` | habilitado por defecto; el entorno `nano` lo apaga (`-D DISABLE_DEBUG_KEEPALIVE`) | `src/config.h` (junto al bloque de flash) |
 | `CONTROL_RESET_DEBOUNCE_MS` | `100` ms | `713` |
 | `CONTROL_FEED_HOLD_DEBOUNCE_MS` | `20` ms (A1 feed hold) | `src/config.h` (junto al de A0) |
 | `DISABLE_CONTROL_RESET_PIN` | deshabilitado (A0 activo) | `730` |

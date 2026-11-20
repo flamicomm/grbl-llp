@@ -55,8 +55,10 @@ alarmas.
 - En el loop crítico de alarmas (`src/protocol.c:284`) queda un `[KA] ALARM\r\n`
   cada 1000 ms, implementado con el contador de ms de LLP (`llp_transport_get_ms()`).
 - El host debe sondear con `?` o `#`. Si no hay respuesta, el MCU está colgado.
-- El keep-alive de depuración (`DEBUG_KEEPALIVE`) está **habilitado** en
-  `src/config.h` para diagnóstico de campo. Imprime cada 10 s, en **tres líneas**:
+- El keep-alive de depuración (`DEBUG_KEEPALIVE`) está **habilitado** por defecto en
+  `src/config.h` para diagnóstico de campo (**el entorno `nano` lo apaga** con
+  `-D DISABLE_DEBUG_KEEPALIVE` en `platformio.ini`, para conservar flash). Imprime
+  cada 10 s, en **tres líneas**:
   ```
   [DBG:t=... s=... sp=... bf=...]
   [DBG:tx=... rx=... u=... re=... rt=...]
@@ -78,8 +80,13 @@ alarmas.
     en compilación. Mantené el debug por debajo de ~45 caracteres para que cada
     mensaje salga en una sola trama.
   El costo en flash depende del build: medilo con `avr-size` antes de afirmar
-  que entra. En el Nano el margen es mínimo: si no entra, deshabilitarlo con
-  `// #define DEBUG_KEEPALIVE`.
+  que entra. El entorno `nano` ya lo compila apagado (`-D DISABLE_DEBUG_KEEPALIVE`
+  en `platformio.ini`) para no gastar ese margen; el `uno` lo conserva. Sin
+  `DEBUG_KEEPALIVE` tampoco se marca el pasaje del main loop: no hay uptime, y
+  `up=` en `[MSG:BOOT:...]` sale `?` (no medido, igual que `stk=?` en arranque
+  frío). Tampoco hay `pk=` (pico de stack), `ca=` ni `a1=` **en las líneas
+  `[DBG:...]`** (que directamente no existen); el `ca=` del banner de boot
+  (`[MSG:BOOT:src=... ca=...]`) sigue apareciendo, porque es incondicional.
 
 ## 4b. Reset del MCU: `[MSG:RST:...]` y `[MSG:BOOT:...]`
 
@@ -104,7 +111,7 @@ reinicio de CPU imprime, antes del banner de Grbl:
 |---|---|
 | `n` | Reinicios desde el último encendido (1 en un arranque en frío) |
 | `m` | `ok` = la RAM se conservó (fue un reset, no un power-on); `wipe` = arranque en frío |
-| `up` | Uptime (ms) del **último pasaje del main loop** de la vida anterior |
+| `up` | Uptime (ms) del **último pasaje del main loop** de la vida anterior; `?` si el build no lo mide (sin `DEBUG_KEEPALIVE`, como el `nano`) |
 | `stk` / `lim` | Pico de stack de la vida anterior / RAM disponible para el stack |
 | `src` | Último origen anotado (`NONE` si nadie llamó a `mc_reset()` antes del reset) |
 | `ca` | Pulsos de A0 filtrados, preservados entre resets |
