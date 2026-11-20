@@ -17,6 +17,13 @@ Luego `src/main.c:48-52`:
 Después entra al `for(;;)` de inicialización (`src/main.c:69`), que limpia `sys`,
 ejecuta startup lines y llama a `protocol_main_loop()` (`src/main.c:119`).
 
+**Nada de reportes antes de `sei()`.** El ring de TX sólo drena en la ISR de UART y
+`llp_tx_emit()` mide su timeout con el contador de Timer2: con las interrupciones
+globales apagadas, una línea que no entra en el ring se descarta (guardia en
+`llp_tx_emit()`) y una secuencia de reporte completa nunca sale. `settings_init()`
+habilita IRQs sólo durante su reporte de arranque y restaura `SREG` al salir;
+cualquier salida nueva en el arranque tiene que hacer lo mismo.
+
 ## Mapa de interrupciones (todas verificadas)
 
 | ISR | Archivo:línea | Rol |
@@ -66,8 +73,9 @@ Los números de línea de esta tabla son volátiles: confírmalos con
 ### Perfil R1 (invariantes)
 
 - El ACK se emite **solo desde el main loop** (`llp_transport_poll()`, llamado en
-  `protocol_execute_realtime()`). La ISR únicamente deja `llp_ack_pending`; el
-  ring de TX tiene un solo escritor.
+  `protocol_execute_realtime()` y, mientras esa función no se alcanza, en el loop de
+  suspensión, en el loop crítico de alarmas y en el loop de homing). La ISR únicamente
+  deja `llp_ack_pending`; el ring de TX tiene un solo escritor. No muevas el poll a una ISR.
 - Un frame `CH1` se acepta **atómicamente**: si el payload no entra completo en
   el ring de línea, no se consume el `SEQ` y no se ACKea. Nunca escribir medio
   comando.

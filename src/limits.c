@@ -270,6 +270,12 @@ void limits_go_home(uint8_t cycle_mask)
     st_prep_buffer(); // Prep and fill segment buffer from newly planned block.
     st_wake_up(); // Initiate motion
     do {
+      // Homing deliberately does not call protocol_execute_realtime(), so
+      // profile the R1 ACK and the liveness timestamp here: this loop is the
+      // live main loop while homing. Still main-loop context.
+      llp_transport_poll();
+      system_diag_mark_loop(llp_transport_get_ms());
+
       if (approach) {
         // Check limit state. Lock out cycle axes when they change.
         limit_state = limits_get_state();

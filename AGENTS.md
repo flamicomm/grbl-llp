@@ -77,6 +77,7 @@ Formato de trama, comando `#`, keep-alive y diferencias con Grbl estándar: `REA
 |---|---|---|
 | MCU se cuelga al primer `G0`/`G1` | EEPROM corrupta | `$RST=$` y luego `$$` |
 | `$$` con `-2147483.648` o líneas faltantes | EEPROM corrupta | `$RST=$` |
+| `[MSG:EEPROM out of range; ...]` al arrancar | EEPROM legible pero con valores inválidos | Arranca con defaults **en RAM** sin escribir EEPROM: revisar `$$`; `$RST=$` solo si se quiere descartar la calibración |
 | `ALARM:98` | No existe en Grbl (solo 1–10); sospecha corrupción de RAM/stack | revisar margen de stack, no "arreglar" el 98 |
 | No responde nada tras flashear | ESP sin modo transparente o baud incorrecto | `doc/known-issues.md` |
 | Frames LLP perdidos (`td:`/`rd:` crecen) | Buffer chico o flush descartando | `#` + `doc/buffers.md` |

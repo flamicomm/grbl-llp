@@ -303,12 +303,62 @@ uint8_t settings_store_global_setting(uint8_t parameter, float value) {
 }
 
 
+// Returns true when the settings loaded from EEPROM are semantically usable.
+// The version byte and the checksum only prove that the record was written by
+// this build: they say nothing about the values (a bit flip can keep the
+// checksum valid, and a poisoned image can be written on purpose). An invalid
+// steps_per_mm or a NaN rate hangs the planner on the first G0/G1.
+static uint8_t settings_values_valid()
+{
+  uint8_t axis;
+  for (axis = 0; axis < N_AXIS; axis++) {
+    if (!isfinite(settings.steps_per_mm[axis]) || (settings.steps_per_mm[axis] <= 0.0) ||
+        (settings.steps_per_mm[axis] >= 1e5) || !isfinite(settings.max_rate[axis]) ||
+        (settings.max_rate[axis] <= 0.0) || !isfinite(settings.acceleration[axis]) ||
+        (settings.acceleration[axis] <= 0.0) || !isfinite(settings.max_travel[axis]) ||
+        (settings.max_travel[axis] > 0.0)) { // max_travel is stored negative (0 allowed) for Grbl internal use.
+      return(false);
+    }
+  }
+  if (!isfinite(settings.junction_deviation) || (settings.junction_deviation < 0.0)) { return(false); }
+  return(true);
+}
+
+
 // Initialize the config subsystem
 void settings_init() {
-  if(!read_global_settings()) {
-    report_status_message(STATUS_SETTING_READ_FAIL);
-    settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
+  uint8_t boot_message = 0; // 0 = nothing to report, 1 = EEPROM read failure, 2 = invalid values
+
+  if (!read_global_settings()) {
+    boot_message = 1;
+  } else if (!settings_values_valid()) {
+    // Version and checksum are fine: this is not a first boot nor a record
+    // from another build, only the values are out of range. Run from
+    // defaults in RAM and DO NOT write EEPROM: it still holds the user's
+    // calibration, which must be reviewed ($# / $$) instead of discarded.
+    settings = defaults;
+    boot_message = 2;
+  }
+
+  if (boot_message) {
+    // The boot report goes out through the LLP TX ring, which only drains in
+    // the UART ISR, and llp_tx_emit() measures its timeout with the Timer2 ms
+    // clock. Both interrupts are armed by serial_init() but global interrupts
+    // are still disabled here (main calls sei() after system_init()), so the
+    // report has to run with IRQs enabled: otherwise a report longer than the
+    // TX ring spins forever waiting for a drain that cannot happen. Nothing
+    // else is running yet, so this is safe. Restore the caller's state.
+    uint8_t sreg = SREG;
+    sei();
+    if (boot_message == 1) {
+      // First boot, or a record written by another build: restore defaults.
+      report_status_message(STATUS_SETTING_READ_FAIL);
+      settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
+    } else {
+      report_feedback_message(MESSAGE_SETTINGS_VALUES_INVALID);
+    }
     report_grbl_settings();
+    SREG = sreg;
   }
 }
 

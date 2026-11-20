@@ -161,6 +161,8 @@ void report_feedback_message(uint8_t message_code)
       printPgmString(PSTR("Restoring spindle")); break;
     case MESSAGE_SLEEP_MODE:
       printPgmString(PSTR("Sleeping")); break;
+    case MESSAGE_SETTINGS_VALUES_INVALID:
+      printPgmString(PSTR("EEPROM out of range; defaults in RAM, calibration kept")); break;
   }
   report_util_feedback_line_feed();
 }
