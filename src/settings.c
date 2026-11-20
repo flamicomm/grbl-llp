@@ -327,21 +327,39 @@ static uint8_t settings_values_valid()
 
 // Initialize the config subsystem
 void settings_init() {
-  if (read_global_settings()) {
-    if (!settings_values_valid()) {
-      // Version and checksum are fine: this is not a first boot nor a record
-      // from another build, only the values are out of range. Run from
-      // defaults in RAM and DO NOT write EEPROM: it still holds the user's
-      // calibration, which must be reviewed ($# / $$) instead of discarded.
-      settings = defaults;
-      report_feedback_message(MESSAGE_SETTINGS_VALUES_INVALID);
-      report_grbl_settings();
-    }
-    return;
+  uint8_t boot_message = 0; // 0 = nothing to report, 1 = EEPROM read failure, 2 = invalid values
+
+  if (!read_global_settings()) {
+    boot_message = 1;
+  } else if (!settings_values_valid()) {
+    // Version and checksum are fine: this is not a first boot nor a record
+    // from another build, only the values are out of range. Run from
+    // defaults in RAM and DO NOT write EEPROM: it still holds the user's
+    // calibration, which must be reviewed ($# / $$) instead of discarded.
+    settings = defaults;
+    boot_message = 2;
   }
-  report_status_message(STATUS_SETTING_READ_FAIL);
-  settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
-  report_grbl_settings();
+
+  if (boot_message) {
+    // The boot report goes out through the LLP TX ring, which only drains in
+    // the UART ISR, and llp_tx_emit() measures its timeout with the Timer2 ms
+    // clock. Both interrupts are armed by serial_init() but global interrupts
+    // are still disabled here (main calls sei() after system_init()), so the
+    // report has to run with IRQs enabled: otherwise a report longer than the
+    // TX ring spins forever waiting for a drain that cannot happen. Nothing
+    // else is running yet, so this is safe. Restore the caller's state.
+    uint8_t sreg = SREG;
+    sei();
+    if (boot_message == 1) {
+      // First boot, or a record written by another build: restore defaults.
+      report_status_message(STATUS_SETTING_READ_FAIL);
+      settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
+    } else {
+      report_feedback_message(MESSAGE_SETTINGS_VALUES_INVALID);
+    }
+    report_grbl_settings();
+    SREG = sreg;
+  }
 }
 
 

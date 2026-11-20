@@ -328,6 +328,13 @@ static int llp_tx_emit(uint8_t channel, const uint8_t *payload, uint8_t len)
 
     wait_start = (uint16_t)llp_transport_get_ms();
     while (llp_tx_ring_free() < needed) {
+        /* With global interrupts disabled the UART ISR cannot drain the ring
+         * and Timer2 cannot advance the ms clock, so this wait would never
+         * end (a boot-time report longer than the ring used to hang here).
+         * Drop the frame instead: the caller counts it. */
+        if (!(SREG & (1 << SREG_I))) {
+            return 0;
+        }
         UCSR0B |= (1 << UDRIE0);
         if ((uint16_t)((uint16_t)llp_transport_get_ms() - wait_start) >= LLP_TX_WAIT_MS) {
             return 0;
