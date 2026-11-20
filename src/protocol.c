@@ -98,23 +98,23 @@ void protocol_main_loop()
           report_status_message(system_execute_line(line));
         } else if (line[0] == '#') {
           // LLP buffer query and debug stats
-          printString("buf:");
+          printPgmString(PSTR("buf:"));
           print_uint8_base10(plan_get_block_buffer_available());
-          printString(" rx:");
+          printPgmString(PSTR(" rx:"));
           {
               llp_stats_t llp_stats;
               llp_transport_get_stats(&llp_stats);
               printInteger(llp_stats.rx_frames);
-              printString(" e:");
+              printPgmString(PSTR(" e:"));
               printInteger(llp_stats.rx_errors);
-              printString(" t:");
+              printPgmString(PSTR(" t:"));
               printInteger(llp_stats.rx_timeouts);
-              printString(" rd:");
+              printPgmString(PSTR(" rd:"));
               printInteger(llp_stats.rx_dropped);
-              printString(" td:");
+              printPgmString(PSTR(" td:"));
               printInteger(llp_stats.tx_dropped);
           }
-          printString("\r\n");
+          printPgmString(PSTR("\r\n"));
           report_status_message(STATUS_OK);
         } else if (sys.state & (STATE_ALARM | STATE_JOG)) {
           // Everything else is gcode. Block if in alarm or jog mode.
@@ -328,10 +328,14 @@ if ((rt_exec == EXEC_ALARM_HARD_LIMIT) || (rt_exec == EXEC_ALARM_SOFT_LIMIT)) {
       {
         unsigned long last_ka = 0;
         do {
+          // This loop blocks the main loop until reset (critical alarm), so
+          // profile the R1 ACK and the liveness timestamp here too.
+          llp_transport_poll();
           unsigned long now = llp_transport_get_ms();
+          system_diag_mark_loop(now);
           if (now - last_ka >= 1000) {
             last_ka = now;
-            printString("[KA] ALARM\r\n");
+            printPgmString(PSTR("[KA] ALARM\r\n"));
           }
         } while (bit_isfalse(sys_rt_exec_state,EXEC_RESET));
       }
@@ -648,6 +652,13 @@ static void protocol_exec_rt_suspend()
   while (sys.suspend) {
 
     if (sys.abort) { return; }
+
+    // This loop is the live main loop while the machine is suspended (feed
+    // hold, safety door, sleep) and protocol_execute_realtime() is not
+    // reached, so profile the R1 ACK here and keep the liveness timestamp
+    // current. Still main-loop context: the UART ring keeps a single writer.
+    llp_transport_poll();
+    system_diag_mark_loop(llp_transport_get_ms());
 
     // Block until initial hold is complete and the machine has stopped motion.
     if (sys.suspend & SUSPEND_HOLD_COMPLETE) {

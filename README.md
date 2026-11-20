@@ -272,6 +272,17 @@ s.write(frame); time.sleep(1); s.close()
 
 Después verificar con `$$` y reconfigurar `$100`–`$132` para tu máquina.
 
+**Validación al arrancar.** El firmware distingue dos casos de EEPROM inutilizable:
+
+- **Versión o checksum inválidos** (primer boot, o datos de otro build): reporta `error:7`
+  y restaura los defaults de compilación en EEPROM. Es el camino de `$RST=$`.
+- **Versión y checksum válidos pero valores fuera de rango** (p. ej. `steps_per_mm`
+  en cero o NaN, `max_travel` positivo): reporta
+  `[MSG:EEPROM out of range; defaults in RAM, calibration kept]`, arranca con los
+  defaults **en RAM** y **no reescribe la EEPROM**. La calibración sigue guardada:
+  revisá `$$` (y `$#` si el problema son las coordenadas de trabajo) y corregí sólo
+  lo que esté mal. Si igual querés descartarla, ahí sí `$RST=$`.
+
 ## Issues conocidos
 
 ### Cuelgue en movimiento tras flashear

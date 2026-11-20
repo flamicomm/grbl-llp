@@ -18,6 +18,13 @@ calcula parámetros de paso inválidos y la ISR de steppers o el main loop se tr
 y verificar con `$$`. Después reconfigurar `$100`–`$132`. Snippet completo en
 `README.md` → "Reseteo de EEPROM al flashear".
 
+**Mitigación en firmware (CNC-029 G-I2):** al arrancar se validan los valores, no solo
+la versión y el checksum. Si el registro es legible pero semánticamente inválido, el
+firmware reporta `[MSG:EEPROM out of range; defaults in RAM, calibration kept]`,
+opera con los defaults **en RAM** y **no escribe la EEPROM**: el cuelgue ya no ocurre
+y la calibración del usuario no se descarta en silencio. El `$RST=$` explícito
+sigue siendo la vía para descartarla a propósito.
+
 **Prevención:** verificar `$$` después de flashear cualquier board, nuevo o usado.
 
 ## 2. El "bug del eje Z" era el mismo problema

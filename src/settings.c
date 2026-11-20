@@ -303,13 +303,45 @@ uint8_t settings_store_global_setting(uint8_t parameter, float value) {
 }
 
 
+// Returns true when the settings loaded from EEPROM are semantically usable.
+// The version byte and the checksum only prove that the record was written by
+// this build: they say nothing about the values (a bit flip can keep the
+// checksum valid, and a poisoned image can be written on purpose). An invalid
+// steps_per_mm or a NaN rate hangs the planner on the first G0/G1.
+static uint8_t settings_values_valid()
+{
+  uint8_t axis;
+  for (axis = 0; axis < N_AXIS; axis++) {
+    if (!isfinite(settings.steps_per_mm[axis]) || (settings.steps_per_mm[axis] <= 0.0) ||
+        (settings.steps_per_mm[axis] >= 1e5) || !isfinite(settings.max_rate[axis]) ||
+        (settings.max_rate[axis] <= 0.0) || !isfinite(settings.acceleration[axis]) ||
+        (settings.acceleration[axis] <= 0.0) || !isfinite(settings.max_travel[axis]) ||
+        (settings.max_travel[axis] > 0.0)) { // max_travel is stored negative (0 allowed) for Grbl internal use.
+      return(false);
+    }
+  }
+  if (!isfinite(settings.junction_deviation) || (settings.junction_deviation < 0.0)) { return(false); }
+  return(true);
+}
+
+
 // Initialize the config subsystem
 void settings_init() {
-  if(!read_global_settings()) {
-    report_status_message(STATUS_SETTING_READ_FAIL);
-    settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
-    report_grbl_settings();
+  if (read_global_settings()) {
+    if (!settings_values_valid()) {
+      // Version and checksum are fine: this is not a first boot nor a record
+      // from another build, only the values are out of range. Run from
+      // defaults in RAM and DO NOT write EEPROM: it still holds the user's
+      // calibration, which must be reviewed ($# / $$) instead of discarded.
+      settings = defaults;
+      report_feedback_message(MESSAGE_SETTINGS_VALUES_INVALID);
+      report_grbl_settings();
+    }
+    return;
   }
+  report_status_message(STATUS_SETTING_READ_FAIL);
+  settings_restore(SETTINGS_RESTORE_ALL); // Force restore all EEPROM data.
+  report_grbl_settings();
 }
 
 

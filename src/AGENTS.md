@@ -66,8 +66,9 @@ Los números de línea de esta tabla son volátiles: confírmalos con
 ### Perfil R1 (invariantes)
 
 - El ACK se emite **solo desde el main loop** (`llp_transport_poll()`, llamado en
-  `protocol_execute_realtime()`). La ISR únicamente deja `llp_ack_pending`; el
-  ring de TX tiene un solo escritor.
+  `protocol_execute_realtime()` y, mientras esa función no se alcanza, en el loop de
+  suspensión, en el loop crítico de alarmas y en el loop de homing). La ISR únicamente
+  deja `llp_ack_pending`; el ring de TX tiene un solo escritor. No muevas el poll a una ISR.
 - Un frame `CH1` se acepta **atómicamente**: si el payload no entra completo en
   el ring de línea, no se consume el `SEQ` y no se ACKea. Nunca escribir medio
   comando.

@@ -83,6 +83,7 @@
 #define MESSAGE_RESTORE_DEFAULTS 9
 #define MESSAGE_SPINDLE_RESTORE 10
 #define MESSAGE_SLEEP_MODE 11
+#define MESSAGE_SETTINGS_VALUES_INVALID 12 // EEPROM readable but semantically invalid: defaults in RAM, EEPROM untouched.
 
 // Prints system status messages.
 void report_status_message(uint8_t status_code);
