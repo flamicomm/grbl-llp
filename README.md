@@ -47,6 +47,8 @@ buf:11 rx:150 e:0 t:2 rd:0 td:0
 ```
 
 Fields: `buf:N` (planner blocks libres), `rx:N` (frames recibidos), `e:N` (errores), `t:N` (timeouts), `rd:N` (RX dropped), `td:N` (TX dropped).
+Los contadores saturan en 65535 (no dan la vuelta): un valor clavado en 65535 está
+saturado; reiniciá la placa para volver a medir.
 
 ## Diferencias con Grbl estándar
 

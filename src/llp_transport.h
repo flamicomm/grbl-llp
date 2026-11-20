@@ -8,7 +8,8 @@
       byte by byte (realtime commands) or pushed into grbl's line buffer.
     - TX: a line buffer is framed and streamed straight into the UART ring,
       reserving the worst case first (all-or-nothing, no partial frames).
-    - Time: Timer2 provides the 1 ms tick used for LLP timeouts.
+    - Time: Timer2 provides the LLP tick (~1.024 ms per count, not 1 ms; the
+      drift is documented in doc/known-issues.md §8).
 */
 
 #ifndef llp_transport_h

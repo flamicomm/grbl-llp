@@ -25,6 +25,12 @@ Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
   .pio/build/uno/firmware.elf
 ```
 
+Gate estático de stack (STK; no cambia `uno` ni `nano`):
+
+```bash
+pio run -e uno_stack && python3 scripts/stack_gate.py   # falla si pico + .data + .bss > 1848 B
+```
+
 ## Invariantes
 
 - **Solo `-Os`.** `-O0` desborda la flash: nunca lo dejes en un commit.
