@@ -213,6 +213,41 @@ streaming y planner lleno: **331 B**.
 keep-alive reporta `pk=` en vivo. Si `pk` se acerca a `lim`, hay que liberar RAM antes
 de que vuelva a corromper `.noinit`. Detalle en [`buffers.md`](buffers.md).
 
+**Gate estático (STK, CNC-029 Ola 3):** además del `pk=` de banco hay un gate en
+host que falla antes de flashear. El entorno de medición `uno_stack`
+(`platformio.ini`) compila con `-fstack-usage`, y el script suma el peor camino del
+grafo de llamadas al `.data + .bss` del build de producción:
+
+```bash
+pio run -e uno_stack
+python3 scripts/stack_gate.py
+```
+
+- **Fórmula del gate:** `pico_estático + .data + .bss > 2048 − 200` (**1848 B**)
+  ⇒ falla. Los 200 B son el colchón fijado por el plan de CNC-029; `.noinit` queda
+  *debajo* del stack y el script lo informa pero no lo suma (no es parte de la
+  fórmula).
+- **Cómo mide:** tamaños de frame de los `.su` de cada unidad de traducción + grafo
+  de llamadas del ELF (`call`/`rcall`/`jmp`). Raíces: `main`/`__vectors` (contexto
+  main) y cada `__vector_N` (contexto ISR). Peor caso = camino main más profundo +
+  camino ISR más profundo, porque una interrupción cae sobre el frame más hondo del
+  main y las ISR del AVR no se anidan (el flag `I` se limpia al entrar).
+- **LTO apagado a propósito en `uno_stack`:** con LTO GCC deja los `.su` vacíos (los
+  frames se cierran recién en la etapa LTRANS). Los números son una estimación del
+  build sin LTO; se cotejan con el `pk=` de banco (si divergen más de 20 %, el gate
+  hay que revisarlo). No cambia `uno` ni `nano`.
+- **Ciclos:** el grafo tiene ciclos estáticos que no existen en runtime
+  (`delay_sec → protocol_execute_realtime`, documentado en `src/nuts_bolts.c` como
+  «to avoid nesting suspend loops»; `__bad_interrupt → __vectors`). El script los
+  corta y los imprime: si aparece un ciclo nuevo, hay que mirarlo. `--strict-cycles`
+  los convierte en error.
+- **Llamadas indirectas:** `icall`/`eicall` no se resuelven estáticamente; cada sitio
+  alcanzable suma 8 B de colchón (`INDIRECT_SLACK`) y se lista con `--verbose`.
+- **Frames no estáticos:** un frame `dynamic` alcanzable hace fallar el gate (una VLA
+  rompe la cuenta). Hoy el único `dynamic` (`print_uint8_base2_ndigit`) es código
+  muerto y el script lo informa sin contarlo.
+
+
 ## 5. Subida al Arduino a través del ESP8266
 
 El ESP es un dispositivo permanente en `/dev/ttyUSB0`. Para flashear hay que ponerlo
@@ -235,6 +270,11 @@ buf:11 rx:150 e:0 t:2 rd:0 td:0
 - `rd:` creciente → saturación de RX.
 - `t:` creciente → timeouts inter-byte (`LLP_FRAME_TIMEOUT_MS`).
 - `e:` creciente → CRC o framing inválido (revisar byte stuffing del lado host).
+
+Los contadores son de 16 bits y **saturan en 65535**: no dan la vuelta. Un `rx:65535`
+clavado es "saturado", no un link muerto; si necesitás números frescos, reiniciá la
+placa. Antes de CNC-029 Ola 3 daban la vuelta a las ~2 h de streaming y el comando
+parecía "bajar" solo.
 
 ## 7. `$1` (stepper idle delay) y reset desde ISR
 
@@ -283,3 +323,41 @@ no se pierden en el hardware (a lo sumo saturan el ring y se cuentan en `rd:`).
 eliminaría la ventana, pero cambia el orden en que se deshabilitan los drivers tras
 matar el movimiento; queda como opcional **solo si el banco lo pide**
 (`docs/plans/CNC-029-grbl-llp.md` del workspace, Ola 2).
+
+## 8. Timer2 cuenta 1.024 ms, no 1 ms (deriva +2,4 %)
+
+`llp_transport_init()` (`src/llp_transport.c`) arranca Timer2 en modo **normal** con
+prescaler 1/64: `16 MHz / 64 / 256 = 976.56 Hz`, o sea **un tick cada 1,024 ms**. El
+contador `llp_ms_counter` se documenta como "ms" pero no lo es: cada unidad vale
+1.024 ms. No es un bug nuevo y **no se migra a CTC** (el plan de CNC-029 lo deja
+explícitamente fuera): la deriva es del 2,4 %, no afecta el movimiento (los pasos los
+genera Timer1) y sólo estira plazos de diagnóstico y de protocolo.
+
+Lo que sí hay que tener en la cabeza al leer un log o ajustar un umbral: **todo plazo
+medido con `llp_transport_get_ms()` es un 2,4 % más largo que su valor nominal**.
+
+| Plazo | Dónde | Nominal | Real |
+|---|---|---|---|
+| Timeout inter-byte del parser v4 (`LLP_RX_TIMEOUT_MS`) | `src/llp_transport.h` | 2000 ms | **2048 ms** |
+| Espera por lugar en el ring de TX (`LLP_TX_WAIT_MS`) | `llp_tx_emit()` | 10 ms | 10,24 ms |
+| Debounce de A0 (`CONTROL_RESET_DEBOUNCE_MS`) | `src/system.c` | 100 ms | 102,4 ms |
+| Debounce de A1 (`CONTROL_FEED_HOLD_DEBOUNCE_MS`) | `src/system.c` | 20 ms | 20,48 ms |
+| `[KA] ALARM` (loop crítico de alarma) | `src/protocol.c` | 1000 ms | **1024 ms** |
+| `[DBG:...]` del keep-alive | `src/protocol.c` | 10 s | **10,24 s** |
+| `t=` de `[DBG:...]` y `up=` de `[MSG:BOOT:...]` (uptime) | `src/protocol.c` | 1 min | 61,4 s |
+
+Consecuencias prácticas:
+
+- Un `t=` de 60000 en el log son **61,4 s** reales, no 60 s. Para comparar `up=` contra
+  el último `t=` visto (reset vs cuelgue) la diferencia de escala es irrelevante, pero
+  no lo uses como cronómetro.
+- El timeout de `LLP_RX_TIMEOUT_MS` es de 2048 ms reales; un host que retransmite "a
+  los 2 s" sigue entrando, y un gap de 2,02 s también cuenta como timeout. No hay
+  margen fino que ajustar acá.
+- Los debounces de A0/A1 filtran un poco más de lo que dicen sus nombres (2,4 % más):
+  no cambia la decisión de hardware (pull-up + 100 nF), sólo no esperes 100,0 ms.
+- `#`/`?` no dependen de este contador; los contadores de stats no se ven afectados.
+
+**Si alguna vez hace falta exactitud** (no hoy): Timer2 en modo CTC con `OCR2A` a 249
+da 1,0000 ms exactos y el vector pasa a ser `TIMER2_COMPA_vect`. Requiere tocar la
+ISR y el `TCCR2A`, y no hay ninguna necesidad medida que lo justifique.

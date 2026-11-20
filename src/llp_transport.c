@@ -42,6 +42,20 @@ static volatile uint16_t llp_tx_ack_count = 0;
 /* Maximum time to wait for room in the TX ring before dropping a frame. */
 #define LLP_TX_WAIT_MS 10u
 
+/* Saturating increment for the 16-bit counters.
+ *
+ * Long jobs wrap them (65535 frames is ~2 h of streaming) and then `#` starts
+ * counting down, which reads as a counter reset. They clamp instead, like the
+ * counters of the protocol library (llp_v4_rel.h: delivered/duplicates). Each
+ * counter is written from a single context (the UART ISR or the main loop), so
+ * the read-modify-write needs no section. */
+static void llp_counter_inc(volatile uint16_t *counter)
+{
+    if (*counter < 0xFFFFu) {
+        (*counter)++;
+    }
+}
+
 /* Must match llp4_frame_size(): the whole worst-case frame has to fit in the
  * ring because the flush reserves it before writing. Checked at compile time. */
 #define LLP_TX_RING_FREE_MAX ((uint16_t)(TX_RING_BUFFER - 1))
@@ -86,8 +100,9 @@ void llp_transport_init(void)
     llp_tx_line_idx = 0;
 
     TCCR2A = 0;
-    TCCR2B = (1 << CS22);  // 1/64 prescaler -> 4us per tick at 16MHz
-    TIMSK2 |= (1 << TOIE2);
+    TCCR2B = (1 << CS22);  // 1/64 prescaler -> 4us per timer tick at 16MHz
+    TIMSK2 |= (1 << TOIE2);  // overflow every 256 ticks: 1.024 ms, not 1 ms
+                             // (drift documented in doc/known-issues.md §8)
 }
 
 ISR(TIMER2_OVF_vect)
@@ -104,7 +119,7 @@ static void llp_rx_buffer_write(uint8_t data)
         serial_rx_buffer[head] = data;
         serial_rx_buffer_head = next_head;
     } else {
-        llp_rx_dropped_count++;
+        llp_counter_inc(&llp_rx_dropped_count);
     }
 }
 
@@ -245,7 +260,7 @@ static void llp_process_command(const uint8_t *payload, uint16_t len)
     data_len = (uint16_t)(len - 1u);
 
     if (data_len > (uint16_t)llp_rx_ring_free()) {
-        llp_rx_busy_count++;
+        llp_counter_inc(&llp_rx_busy_count);
         return;   /* defer: the retransmission will retry */
     }
 
@@ -253,7 +268,7 @@ static void llp_process_command(const uint8_t *payload, uint16_t len)
         for (i = 0; i < data_len; i++) {
             llp_rx_buffer_write(payload[1 + i]);
         }
-        llp_rx_command_count++;
+        llp_counter_inc(&llp_rx_command_count);
     }
 
     /* New frame or duplicate: always acknowledge, so a lost ACK cannot
@@ -266,7 +281,7 @@ void llp_transport_rx_byte(uint8_t byte)
 {
     int rc;
 
-    llp_rx_raw_bytes++;
+    llp_counter_inc(&llp_rx_raw_bytes);
     /* Inside the UART ISR: interrupts are disabled, so the 32-bit counter read
      * cannot tear. The parser only needs 16 bits (wrap-safe). */
     rc = llp4_parser_feed(&llp_rx_parser, byte, (uint16_t)llp_ms_counter);
@@ -274,7 +289,7 @@ void llp_transport_rx_byte(uint8_t byte)
     if (rc == LLP4_EV_FRAME) {
         uint8_t len = llp_rx_parser.length;
         if (len > 0) {
-            llp_rx_frame_count++;
+            llp_counter_inc(&llp_rx_frame_count);
             if (llp_rx_parser.channel == LLP4_REL_CH_COMMAND) {
                 llp_process_command(llp_rx_payload, len);
             } else if (llp_rx_parser.channel == LLP4_REL_CH_HELLO) {
@@ -287,9 +302,9 @@ void llp_transport_rx_byte(uint8_t byte)
             /* Other channels are reserved: ignored, never an error. */
         }
     } else if (rc < 0) {
-        llp_rx_error_count++;
+        llp_counter_inc(&llp_rx_error_count);
         if (rc == -(int)LLP4_ERR_TIMEOUT) {
-            llp_rx_timeout_count++;
+            llp_counter_inc(&llp_rx_timeout_count);
         }
     }
 }
@@ -361,7 +376,7 @@ void llp_transport_tx_flush(void)
     llp_tx_line_idx = 0;
 
     if (!llp_tx_emit(LLP_TX_CHANNEL, llp_tx_line_buf, idx)) {
-        llp_tx_dropped_count++;
+        llp_counter_inc(&llp_tx_dropped_count);
     }
 }
 
@@ -386,7 +401,7 @@ void llp_transport_poll(void)
 
     seq = llp_ack_seq;
     if (llp_tx_emit((uint8_t)LLP4_REL_CH_ACK, &seq, 1)) {
-        llp_tx_ack_count++;
+        llp_counter_inc(&llp_tx_ack_count);
         if (llp_ack_seq == seq) {
             llp_ack_pending = 0;
         }

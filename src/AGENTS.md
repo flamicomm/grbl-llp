@@ -33,13 +33,19 @@ cualquier salida nueva en el arranque tiene que hacer lo mismo.
 | `TIMER1_COMPA_vect` | `src/stepper.c:319` | segmento del planificador (genera pulsos) |
 | `TIMER0_OVF_vect` | `src/stepper.c:489` | temporización de pulso STEP |
 | `TIMER0_COMPA_vect` | `src/stepper.c:504` | fin del `STEP_PULSE_DELAY` |
-| `TIMER2_OVF_vect` | `src/llp_transport.c:55` | contador de ms de LLP |
+| `TIMER2_OVF_vect` | `src/llp_transport.c` | contador de tick de LLP (~1,024 ms) |
 | `LIMIT_INT_vect` | `src/limits.c:110` | pin-change de límites (hard limits) |
 | `WDT_vect` | `src/limits.c:135` | watchdog (uso interno de Grbl) |
 | `CONTROL_INT_vect` | `src/system.c:118` | pin-change de control (reset/cycle/feed hold) |
 
 **Timer0, Timer1 y Timer2 están ocupados.** No agregues ISRs ni reconfigures prescalers
 sin revisar el impacto en step timing o en el contador de ms de LLP.
+
+**El tick de LLP no es 1 ms: son 1,024 ms** (Timer2 en modo normal, prescaler 1/64:
+`16e6/64/256 = 976,56 Hz`). No migres a CTC: la deriva (+2,4 %) sólo estira plazos de
+protocolo y diagnóstico y está documentada, con la tabla de plazos afectados, en
+`doc/known-issues.md` §8 (`LLP_RX_TIMEOUT_MS` → 2048 ms reales, debounces de A0/A1,
+`[KA] ALARM` cada 1024 ms, `[DBG]` cada 10,24 s, unidades de `t=`/`up=`).
 
 ## Estado de flags en `src/config.h`
 
@@ -98,7 +104,9 @@ Los números de línea de esta tabla son volátiles: confírmalos con
 - **El stack es el recurso más ajustado.** La RAM libre después de `.noinit` es todo
   lo que hay, y `.noinit` está pegado debajo: un desborde lo corrompe en silencio
   (ver `doc/buffers.md` → "Stack"). Antes de agregar locales grandes o buffers,
-  mirá `pk=` / `lim=` del keep-alive.
+  mirá `pk=` / `lim=` del keep-alive y corré el gate estático:
+  `pio run -e uno_stack && python3 scripts/stack_gate.py` (falla si
+  `pico_estático + .data + .bss > 1848 B`).
 - **`.noinit` está reservado para diagnóstico de resets** (`src/system.c`:
   `last_reset_source`, `a0_transient_count`, `a1_transient_count`, `diag_*`).
   `system_diag_boot_init()` tiene que ser lo primero que corre en `main()`. No metas
