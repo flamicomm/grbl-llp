@@ -177,6 +177,14 @@ ACK     (canal 2):  [SEQ]               MCU  -> host
 - **ACK desde el main loop** (`llp_transport_poll()`, llamado en
   `protocol_execute_realtime()`): el ring de TX tiene un solo escritor, la ISR
   solo marca `llp_ack_pending`.
+- **ACK = aceptado para entrega, no ejecutado.** El ACK confirma que la trama
+  llegó y que sus bytes entraron en el ring de línea del MCU; el **resultado de
+  la ejecución sigue llegando por el canal 0** (`ok`, `error:N`, `[MSG:...]`).
+  Caso concreto: un comando CH1 con payload de **48–63 B** entra completo en el
+  ring de recepción (`RX_BUFFER_SIZE = 80`), así que **se ACKea**, pero al
+  parsearse excede `LINE_BUFFER_SIZE = 48` y responde `error:11` (line overflow)
+  por el canal 0. El ACK no contradice ese `error:11` ni lo reemplaza: el host
+  tiene que consumir ambos canales.
 - El stream grbl normal (`ok`, status, `[DBG]`, `[MSG]`) sigue por el **canal 0**
   sin cambios, y los realtime (`?`, `!`, `~`, `0x18`) también.
 
@@ -208,6 +216,30 @@ Abrir el puerto resetea el MCU y el banner de arranque puede tardar ~3,9 s
 (F-013/F-014), así que antes del handshake el arnés **drena** lo que llega
 durante `--wait-boot` (4,5 s por defecto) e informa cuántos bytes descartó; ese
 conteo es también evidencia del replay del CH340 (F-018).
+
+## Modelo de amenaza
+
+LLP no autentica, no cifra y no defiende la disponibilidad. **El texto canónico
+wire-level no vive acá**: está en `llp-protocol`, [`docs/INTEGRATION.md` →
+"Threat model"](https://github.com/flamicomm/llp-protocol/blob/main/docs/INTEGRATION.md#threat-model)
+(ítem L-I3), con el detalle de qué mitiga y qué no cada capa (CRC16 contra ruido
+y no MAC, dedup R1 y no anti-replay, `HELLO` en canal 3 sin autenticar).
+
+Lo específico de esta máquina:
+
+- El perfil R1 llega **sin autenticación**: cualquier peer que alcance al
+  ESP8266 puede inyectar, por el canal 0, G-code y realtime (`!`, `~`, `?`), y en
+  los otros canales `0x18` (reset), `$RST=*` (borra settings y coordenadas), un
+  ACK o un `HELLO`.
+- **No se implementa autenticación en el ATmega328P** (decisión de CNC-029): no
+  hay espacio de claves y ningún secreto protege nada si el atacante ya escribe
+  el puerto serie. La mitigación es de **perímetro** y pertenece al puente
+  ESP8266 (plan `docs/plans/CNC-029-esp-bridge.md`, ítem E-I6): qué expone el
+  puerto 23, `/save` restringido a modo AP y password de AP configurable. El
+  riesgo de una LAN confiable se asume explícitamente en el ADR-015 propuesto
+  por E-I6 en el `docs/DECISIONS.md` del workspace.
+- Si el enlace cruza una red que no controlás, terminá un canal autenticado y
+  cifrado (TLS, WireGuard, SSH) por debajo y dejá LLP como framing.
 
 ## Scripts de prueba
 
