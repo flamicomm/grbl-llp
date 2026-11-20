@@ -721,7 +721,13 @@
 // during a job (ca = A0 pulses filtered by the debounce, a1 = A1 feed hold
 // pulses filtered by the debounce). Measure the flash cost with avr-size before
 // enabling it on a full build.
-#define DEBUG_KEEPALIVE
+//
+// On by default. A build can turn it off with -D DISABLE_DEBUG_KEEPALIVE (the
+// nano environment in platformio.ini does, to keep its flash margin): only the
+// [DBG:...] output and the loop liveness mark (up= in [MSG:BOOT:...]) go away.
+#ifndef DISABLE_DEBUG_KEEPALIVE
+  #define DEBUG_KEEPALIVE
+#endif
 
 // Nominal internal bandgap used to estimate Vcc at boot ($I-style diagnostics,
 // CNC-002). The datasheet range is 1.0-1.2 V: measure the real one with a

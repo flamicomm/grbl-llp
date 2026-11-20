@@ -133,7 +133,9 @@ int main(void)
   // only re-runs the for(;;) loop below and reports itself with [MSG:RST:...].
   //   n   = restarts since the last power-on (1 on a cold start)
   //   m   = "ok" when RAM was preserved (not a power-on), "wipe" otherwise
-  //   up  = uptime of the last main-loop pass of the previous life (ms)
+  //   up  = uptime of the last main-loop pass of the previous life (ms), or '?'
+  //         when nothing marks it (build without DEBUG_KEEPALIVE): a 0 would
+  //         look like a real measurement
   //   vcc = Vcc estimate from the internal bandgap (see measure_vcc_mv), '?' when
   //         the ADC read is not usable
   printPgmString(PSTR("[MSG:BOOT:n="));
@@ -141,7 +143,14 @@ int main(void)
   printPgmString(PSTR(" m="));
   printPgmString(ram_preserved ? PSTR("ok") : PSTR("wipe"));
   printPgmString(PSTR(" up="));
-  print_uint32_base10(system_diag_last_loop_ms());
+  #ifdef DEBUG_KEEPALIVE
+    print_uint32_base10(system_diag_last_loop_ms());
+  #else
+    // The keep-alive is what calls system_diag_mark_loop() in the main loop, so
+    // without it the .noinit value is never written: report '?' as the cold-start
+    // stk= does instead of a meaningless 0.
+    printPgmString(PSTR("?"));
+  #endif
   printPgmString(PSTR("]\r\n"));
   // Peak stack usage vs. the total stack area (bytes). If peak == limit the
   // stack reached the diagnostics (overflow into .noinit).
