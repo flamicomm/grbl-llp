@@ -457,8 +457,14 @@ void report_realtime_status()
 {
   uint8_t idx;
   int32_t current_position[N_AXIS]; // Copy current state of the system position variable
-  memcpy(current_position,sys_position,sizeof(sys_position));
   float print_position[N_AXIS];
+  // Critical section: sys_position is updated by the stepper ISR as a per-axis
+  // vector, so a copy taken between axes reports a "torn" MPos. Keep it minimal
+  // (a few microseconds); report_realtime_status() only runs from the main loop.
+  uint8_t sreg = SREG;
+  cli();
+  memcpy(current_position,sys_position,sizeof(sys_position));
+  SREG = sreg;
   system_convert_array_steps_to_mpos(print_position,current_position);
 
   // Report current machine state and sub-states

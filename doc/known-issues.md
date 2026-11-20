@@ -235,3 +235,51 @@ buf:11 rx:150 e:0 t:2 rd:0 td:0
 - `rd:` creciente → saturación de RX.
 - `t:` creciente → timeouts inter-byte (`LLP_FRAME_TIMEOUT_MS`).
 - `e:` creciente → CRC o framing inválido (revisar byte stuffing del lado host).
+
+## 7. `$1` (stepper idle delay) y reset desde ISR
+
+**Qué pasa.** Un reset pedido **desde interrupción** con la máquina en movimiento
+—`0x18` en un frame LLP (`src/llp_transport.c`, `CMD_RESET`) o un hard limit
+(`src/limits.c`)— ejecuta `mc_reset()` en contexto de ISR
+(`src/motion_control.c`). Con movimiento en curso, `mc_reset()` setea la alarma y
+llama a `st_go_idle()`, y `st_go_idle()` (`src/stepper.c`) espera el dwell de `$1`
+**antes** de deshabilitar los drivers:
+
+```c
+delay_ms(settings.stepper_idle_lock_time);
+```
+
+Ese `delay_ms()` corre con las interrupciones globales deshabilitadas (estamos
+dentro de una ISR): durante `$1` ms no corre el main loop **ni la ISR de RX de la
+UART**. Con el default `$1=25` son hasta **~25 ms** y, a 115200 baud (~11.5 B/ms),
+unos **~288 B** que el host ya puso en el cable se pierden: el buffer de recepción
+del AVR tiene 2 bytes y no hay flow control. En el canal 1 (R1) lo absorben el ACK
+y la retransmisión; el stream del canal 0 (`ok`/`error`) no tiene recuperación, así
+que el host ve un hueco aunque la máquina ya esté reseteada.
+
+**`$1=255` no arregla este caso.** Con `$1=255` (`0xFF`) Grbl salta el dwell en el
+fin de ciclo normal y deja los drivers siempre habilitados (es lo recomendable para
+streaming con paradas frecuentes), **pero en el camino de reset el flag de alarma
+ya está seteado** (`sys_rt_exec_alarm`) y la condición de `st_go_idle()` se cumple
+igual: el `delay_ms(255)` bloquea **~255 ms** en la ISR (~2 900 B perdidos).
+
+| `$1` | Fin de ciclo normal | Reset desde ISR en movimiento |
+|---|---|---|
+| `25` (default) | dwell de 25 ms; los drivers se deshabilitan | **~25 ms** de bloqueo |
+| `255` | sin dwell; drivers siempre habilitados | **~255 ms** de bloqueo |
+
+**Recomendación.** Para streaming con paradas frecuentes, `$1=255` evita el ciclo
+habilitar/deshabilitar drivers y el dwell por parada. La ventana del reset la fija
+`$1` en sentido contrario: si el banco mide pérdidas en un reset en movimiento, la
+palanca es **bajar** `$1` (p. ej. `$1=1`, ~1 ms). Sólo el reset que corre en
+**contexto de ISR** tiene esta ventana: el byte `0x18` en un frame LLP y los hard
+limits (en `LIMIT_INT_vect`, o en `WDT_vect` con el debounce por watchdog). A0 (se
+confirma en el main loop tras el debounce), los soft limits, `$C` off, `$RST=*` y el
+homing fail llaman a `mc_reset()` desde el main loop con las IRQs habilitadas: el
+`delay_ms()` frena el main loop, pero la ISR de RX sigue corriendo, así que los bytes
+no se pierden en el hardware (a lo sumo saturan el ring y se cuentan en `rd:`).
+
+**No diferido en esta ola (G-M3 paso 2).** Mover `st_go_idle()` al main loop
+eliminaría la ventana, pero cambia el orden en que se deshabilitan los drivers tras
+matar el movimiento; queda como opcional **solo si el banco lo pide**
+(`docs/plans/CNC-029-grbl-llp.md` del workspace, Ola 2).

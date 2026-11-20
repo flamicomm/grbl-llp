@@ -75,6 +75,7 @@ void eeprom_put_char( unsigned int addr, unsigned char new_value )
 {
 	char old_value; // Old EEPROM value.
 	char diff_mask; // Difference mask, i.e. old value XOR new value.
+	uint8_t sreg = SREG; // Preserve the caller's interrupt state.
 
 	cli(); // Ensure atomic operation for the write operation.
 	
@@ -121,7 +122,7 @@ void eeprom_put_char( unsigned int addr, unsigned char new_value )
 		}
 	}
 	
-	sei(); // Restore interrupt flag state.
+	SREG = sreg; // Restore the caller's interrupt state (never force-enable).
 }
 
 // Extensions added as part of Grbl 
