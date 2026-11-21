@@ -16,7 +16,19 @@ Procedimiento y síntomas exactos: `README.md` → "Reseteo de EEPROM al flashea
 pio run -e uno                                        # compilar UNO
 pio run -e nano                                       # compilar Nano (old bootloader)
 pio run -e uno -t upload --upload-port /dev/ttyUSB0    # subir (ESP en modo transparente)
+pio test -e native_test --without-uploading           # 9 casos en host (Unity, sin hardware)
 ```
+
+El ambiente nativo compila `src/llp_transport.c` en el host y cubre lo que
+antes solo se probaba en banco, en este orden: ring lleno (aceptación
+atómica), dedup + re-ACK, HELLO, wrap de `SEQ` 255→0, chunking de líneas
+largas, stuffing, timeout inter-byte, HELLO vacío y `duplicates` acumulado.
+
+Banco del perfil R1 por puerto serie: `scripts/test_r1.py` habla CH1/CH2
+directo y verifica **T1–T5** (entrega limpia, ACK perdido, `SEQ` repetido con
+otro payload, wrap 255→0; **T5 = HELLO vacío** de `LEN=0`). Drena el banner
+de arranque antes del handshake; y como siempre tras flashear, `$RST=$` y
+verificar con `$$` (ver "Regla de oro").
 
 Medir tamaño real (obligatorio antes de afirmar que algo "cabe"):
 
@@ -44,6 +56,10 @@ pio run -e uno_stack && python3 scripts/stack_gate.py   # falla si pico + .data 
 - **Sin spindle ni coolant:** `spindle_control.c` y `coolant_control.c` son stubs.
 - **Firmware del ESP8266 (fuera de este repo):** nunca uses `Serial.print()`; ese UART
   está permanentemente conectado al Arduino.
+- **HELLO vacío también resetea el dedup:** un HELLO de canal 3 con payload de
+  0 B (`LEN=0`, legal según `llp-spec/docs/RELIABILITY.md` §3) reinicia el
+  estado de dedup igual que el de 1 B. `duplicates` es acumulado y **no** se
+  resetea con HELLO: es diagnóstico, no estado de sesión.
 
 ## Arquitectura (3 capas)
 
